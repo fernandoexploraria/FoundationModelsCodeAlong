@@ -12,6 +12,7 @@
 
 /* Begin PBXFileReference section */
 		6E4A0A84588A43B861AA4B13 /* SampleCode.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = SampleCode.xcconfig; path = ../Configuration/SampleCode.xcconfig; sourceTree = "<group>"; };
+		BA80B4282E8C529200D4F65F /* .gitignore */ = {isa = PBXFileReference; lastKnownFileType = text; name = .gitignore; path = ../.gitignore; sourceTree = "<group>"; };
 		E16EAEECEF028AEBB0E1E37E /* LICENSE.txt */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = LICENSE.txt; sourceTree = "<group>"; };
 		E54AA9F62E566DED00EFC996 /* FoundationModelsCodeAlong.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FoundationModelsCodeAlong.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E5BC95362E7D20C800F913F7 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; name = README.md; path = ../README.md; sourceTree = SOURCE_ROOT; };
@@ -61,6 +62,7 @@
 				E54AA9F72E566DED00EFC996 /* Products */,
 				99699BAED8F9B13D08DD0A15 /* Configuration */,
 				459BA2FB8A1558B47BBA76BD /* LICENSE */,
+				BA80B4282E8C529200D4F65F /* .gitignore */,
 			);
 			sourceTree = "<group>";
 		};
