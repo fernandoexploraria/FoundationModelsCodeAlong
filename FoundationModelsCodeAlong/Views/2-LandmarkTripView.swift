@@ -9,9 +9,7 @@ import SwiftUI
 
 struct LandmarkTripView: View {
     let landmark: Landmark
-    
-    // MARK: - [CODE-ALONG] Chapter 1.6.1: Add a local variable of type `ItineraryGenerator`
-
+    @State private var itineraryGenerator: ItineraryGenerator?
     @State private var requestedItinerary: Bool = false
     
     var body: some View {
@@ -28,24 +26,23 @@ struct LandmarkTripView: View {
                 .padding(.horizontal)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            // MARK: - [CODE-ALONG] Chapter 1.6.3: Replace EmptyView with model output
-            // MARK: - [CODE-ALONG] Chapter 2.4: Update the Text view with `ItineraryView`
-            else {
-                EmptyView()
+            else if let itinerary = itineraryGenerator?.itinerary {
+                ItineraryView(landmark: landmark, itinerary: itinerary).padding()
             }
         }
         .scrollDisabled(!requestedItinerary)
         .safeAreaInset(edge: .bottom) {
-            // MARK: - [CODE-ALONG] Chapter 1.6.4: Generate itinerary and show the button
+//FO: this is the button that generates the itinerary
             ItineraryButton {
                 requestedItinerary = true
+                await itineraryGenerator?.generateItinerary()
             }
-            .hidden()
         }
         .task {
-            // MARK: - [CODE-ALONG] Chapter 1.6.2: Create the generator when the view appears
-            // MARK: - [CODE-ALONG] Chapter 6.1.2: Pre-warm the model when the view appears
-            
+ //FO: this is where we pass the landmark to the generator
+            let generator = ItineraryGenerator(landmark: landmark)
+            self.itineraryGenerator = generator
+            generator.prewarmModel()
         }
         .headerStyle(landmark: landmark)
     }

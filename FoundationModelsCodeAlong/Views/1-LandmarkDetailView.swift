@@ -11,15 +11,9 @@ import SwiftUI
 struct LandmarkDetailView: View {
     let landmark: Landmark
     
-    // MARK: - [CODE-ALONG] Chapter 1.4.1: Add a model instance
-    
-    // MARK: - [CODE-ALONG] Chapter 1.4.2: Remove placeholder availability
-    private enum Availability { case available, unavailable }
-    private let availability: Availability = .available
-
+    private let model = SystemLanguageModel.default
     var body: some View {
-        // MARK: - [CODE-ALONG] Chapter 1.4.3: Replace availability with model.availability
-        switch availability {
+        switch model.availability {
         case .available:
             LandmarkTripView(landmark: landmark)
             

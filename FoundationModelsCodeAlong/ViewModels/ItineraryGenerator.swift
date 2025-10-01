@@ -14,33 +14,45 @@ final class ItineraryGenerator {
     
     var error: Error?
     let landmark: Landmark
-    
-    // MARK: - [CODE-ALONG] Chapter 1.5.1: Add a session property
-    
-    // MARK: - [CODE-ALONG] Chapter 2.3.1: Update to Generable
-    // MARK: - [CODE-ALONG] Chapter 4.1.1: Change the property to hold a partially generated Itinerary
-    private(set) var itineraryContent: String?
-
+    private var session : LanguageModelSession
+    private(set) var itinerary: Itinerary.PartiallyGenerated?
     init(landmark: Landmark) {
         self.landmark = landmark
-        // MARK: - [CODE-ALONG] Chapter 1.5.2: Initialize LanguageModelSession
-        // MARK: - [CODE-ALONG] Chapter 2.3.3: Update instructions to remove structural guidance
-        // MARK: - [CODE-ALONG] Chapter 5.3.1: Update the instructions to use the Tool
-        // MARK: - [CODE-ALONG] Chapter 5.3.2: Update the LanguageModelSession with the tool
-               
+        let pointOfInterestTool = FindPointsOfInterestTool(landmark: landmark)
+        let instructions = Instructions {
+                 "Your job is to create an itinerary for the user."
+                 "For each day, you must suggest one hotel and one restaurant."
+                 "Always use the 'findPointsOfInterest' tool to find hotels and restaurant in \(landmark.name)"
+        }
+        self.session = LanguageModelSession(
+             tools: [pointOfInterestTool],
+             instructions: instructions
+         )
     }
 
     func generateItinerary(dayCount: Int = 3) async {
-        // MARK: - [CODE-ALONG] Chapter 1.5.3: Add itinerary generator using Foundation Models
-        // MARK: - [CODE-ALONG] Chapter 2.3.2: Update to use Generables
-        // MARK: - [CODE-ALONG] Chapter 3.3: Update to use one-shot prompting
-        // MARK: - [CODE-ALONG] Chapter 4.1.2: Update to use streaming API
-        // MARK: - [CODE-ALONG] Chapter 5.3.3: Update `session.streamResponse` to include greedy sampling
-        // MARK: - [CODE-ALONG] Chapter 6.2.1: Update to exclude schema from prompt
-         
+        do {
+             let prompt = Prompt {
+                            "Generate a \(dayCount)-day itinerary to \(landmark.name)."
+                            "Give it a fun title and description."
+                            "Here is an example of the desired format, but don't copy its content:"
+                            Itinerary.exampleTripToJapan
+                        }
+            let stream = session.streamResponse(
+                to: prompt,
+                generating: Itinerary.self,
+                includeSchemaInPrompt: false,
+                options: GenerationOptions(sampling: .greedy)
+            )
+            for try await partialResponse in stream {
+                self.itinerary = partialResponse.content
+            }
+        } catch {
+            self.error = error
+        }
     }
 
     func prewarmModel() {
-        // MARK: - [CODE-ALONG] Chapter 6.1.1: Add a function to pre-warm the model
+        session.prewarm(promptPrefix: Prompt {"Generate a 3-day itinerary to \(landmark.name)."})
     }
 }
