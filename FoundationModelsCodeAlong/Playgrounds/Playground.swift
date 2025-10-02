@@ -14,7 +14,7 @@ import Playgrounds
     let instructions = Instructions {
         "Your job is to create an itinerary for the user."
         "For each day, you must suggest one hotel and one restaurant."
-        "Always use the 'findPointsOfInterest' tool to find hotels and restaurants in \(landmark.name)"
+        "Always use the 'findPointsOfInterest' tool to find hotels and restaurant in \(landmark.name)"
     }
     
     let session = LanguageModelSession(

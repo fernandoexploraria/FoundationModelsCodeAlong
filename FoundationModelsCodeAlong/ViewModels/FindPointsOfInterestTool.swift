@@ -20,7 +20,7 @@ final class FindPointsOfInterestTool: Tool {
 
     @Generable
     struct Arguments {
-        @Guide(description: "This is the type of place to look up for.")
+        @Guide(description: "This is the type of business to look up for.")
          let pointOfInterest: Category
     }
     
@@ -74,4 +74,3 @@ private func MapKitSearch(latitude: Double, longitude: Double, category: Categor
         return []
     }
 }
-
