@@ -23,6 +23,8 @@ final class AutocompleteViewModel: NSObject, ObservableObject, MKLocalSearchComp
     @Published var suggestions: [MKLocalSearchCompletion] = []
     @Published var isUserTyping: Bool = true
 
+    private let worldRegion = MKCoordinateRegion(center: CLLocationCoordinate2D(latitude: 0, longitude: 0), span: MKCoordinateSpan(latitudeDelta: 180, longitudeDelta: 360))
+
     private let completer: MKLocalSearchCompleter = {
         let c = MKLocalSearchCompleter()
         c.resultTypes = [.address, .pointOfInterest] // locations only (addresses & POIs); exclude generic queries
@@ -32,6 +34,7 @@ final class AutocompleteViewModel: NSObject, ObservableObject, MKLocalSearchComp
     override init() {
         super.init()
         completer.delegate = self
+        completer.region = worldRegion
     }
 
     func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
@@ -54,6 +57,14 @@ final class AutocompleteViewModel: NSObject, ObservableObject, MKLocalSearchComp
 
     func beginProgrammaticCommit() { isUserTyping = false }
     func resumeUserTyping() { isUserTyping = true }
+
+    func setBiasRegion(_ region: MKCoordinateRegion?) {
+        if let region {
+            completer.region = region
+        } else {
+            completer.region = worldRegion
+        }
+    }
 }
 
 // Helper to decode the JSON we show on screen
@@ -126,10 +137,13 @@ final class LandmarkInfoViewModel: ObservableObject {
         """
     }
 
-    func lookupCoordinates() async {
+    func lookupCoordinates(biasRegion: MKCoordinateRegion? = nil) async {
         let q = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return }
         let request = MKLocalSearch.Request()
+        if let biasRegion {
+            request.region = biasRegion
+        }
         request.naturalLanguageQuery = q
         let search = MKLocalSearch(request: request)
         do {
@@ -377,11 +391,19 @@ struct LandmarkInfoView: View {
     @State private var cameraPosition: MapCameraPosition = .region(MKCoordinateRegion(center: CLLocationCoordinate2D(latitude: 0, longitude: 0), span: .init(latitudeDelta: 2, longitudeDelta: 2)))
 
     @State private var textFieldHeight: CGFloat = 0
+    @State private var biasRegion: MKCoordinateRegion? = nil
 
     private func updateRegion() {
         let coord = CLLocationCoordinate2D(latitude: model.latitude, longitude: model.longitude)
         guard CLLocationCoordinate2DIsValid(coord), coord.latitude != 0 || coord.longitude != 0 else { return }
-        cameraPosition = .region(MKCoordinateRegion(center: coord, span: .init(latitudeDelta: 2, longitudeDelta: 2)))
+        // Map preview region (wider span)
+        let mapRegion = MKCoordinateRegion(center: coord, span: .init(latitudeDelta: 2, longitudeDelta: 2))
+        cameraPosition = .region(mapRegion)
+        // Bias region (city scale)
+        let citySpan = MKCoordinateSpan(latitudeDelta: 0.6, longitudeDelta: 0.6)
+        let newBias = MKCoordinateRegion(center: coord, span: citySpan)
+        biasRegion = newBias
+        autocomplete.setBiasRegion(newBias)
     }
 
     @MainActor
@@ -454,6 +476,8 @@ struct LandmarkInfoView: View {
         
         // Reset UI measurements
         textFieldHeight = 0
+        biasRegion = nil
+        autocomplete.setBiasRegion(nil)
     }
 
     var body: some View {
@@ -472,7 +496,7 @@ struct LandmarkInfoView: View {
                         })
                         Button("Search") {
                             Task {
-                                await model.lookupCoordinates()
+                                await model.lookupCoordinates(biasRegion: biasRegion)
                                 if canGenerate {
                                     await startDescriptionGeneration()
                                 }
