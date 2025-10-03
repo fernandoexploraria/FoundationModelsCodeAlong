@@ -28,6 +28,17 @@ struct LandmarksHomeView: View {
             }
             .navigationTitle("")
             .padding(.top, 20)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink {
+                        LandmarkInfoView()
+                    } label: {
+                        Label("Lookup", systemImage: "sparkles")
+                            .accessibilityLabel("Landmark Info Lookup")
+                            .accessibilityHint("Open the landmark info search and generator")
+                    }
+                }
+            }
         }
     }
 }
@@ -52,4 +63,8 @@ struct LandmarkListItemView: View {
             .cornerRadius(15.0)
             .clipped()
     }
+}
+
+#Preview {
+    LandmarksHomeView()
 }

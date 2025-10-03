@@ -9,6 +9,13 @@ private struct PlacePin: Identifiable {
     let coordinate: CLLocationCoordinate2D
 }
 
+private struct TextFieldHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 // Autocomplete support using MKLocalSearchCompleter
 @MainActor
 final class AutocompleteViewModel: NSObject, ObservableObject, MKLocalSearchCompleterDelegate {
@@ -115,83 +122,6 @@ final class LandmarkInfoViewModel: ObservableObject {
         """
     }
 
-    // MARK: - Persistence for landmarkData.json
-    private func dataFileURL() throws -> URL {
-        let dir = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-        return dir.appendingPathComponent("landmarkData.json")
-    }
-
-    private func ensureWritableCopy() throws {
-        let url = try dataFileURL()
-        if !FileManager.default.fileExists(atPath: url.path) {
-            if let bundled = Bundle.main.url(forResource: "landmarkData", withExtension: "json") {
-                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try FileManager.default.copyItem(at: bundled, to: url)
-            } else {
-                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try "[]\n".data(using: .utf8)?.write(to: url, options: .atomic)
-            }
-        }
-    }
-
-    private struct IDOnly: Decodable { let id: Int }
-
-    private func nextID() -> Int {
-        do {
-            try ensureWritableCopy()
-            let url = try dataFileURL()
-            let data = try Data(contentsOf: url)
-            let ids = (try? JSONDecoder().decode([IDOnly].self, from: data))?.map { $0.id } ?? []
-            return (ids.max() ?? 0) + 1
-        } catch {
-            return 1
-        }
-    }
-
-    func saveCurrentToLandmarkData() {
-        do {
-            try ensureWritableCopy()
-            let url = try dataFileURL()
-            let raw = (try? String(contentsOf: url, encoding: .utf8)) ?? "[]"
-            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard trimmed.hasPrefix("[") && trimmed.hasSuffix("]") else { return }
-            let inner = trimmed.dropFirst().dropLast()
-            let isEmpty = inner.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-
-            let escapedName = Self.escapeJSONString(name)
-            let lat = String(format: "%.5f", locale: Locale(identifier: "en_US_POSIX"), latitude)
-            let lon = String(format: "%.5f", locale: Locale(identifier: "en_US_POSIX"), longitude)
-            let newID = nextID()
-
-            let newObject = """
-                {
-                    \"name\": \"\(escapedName)\",
-                    \"continent\": \"\",
-                    \"id\": \(newID),
-                    \"placeID\": \"\",
-                    \"longitude\": \(lon),
-                    \"latitude\": \(lat),
-                    \"span\": 0.0,
-                    \"description\": \"\",
-                    \"shortDescription\": \"\"
-                }
-            """
-
-            let newContent: String
-            if isEmpty {
-                newContent = "[\n\(newObject)\n]\n"
-            } else {
-                // remove the final ']' and append with a comma
-                let withoutClosing = trimmed.dropLast()
-                newContent = String(withoutClosing) + ",\n" + newObject + "\n]\n"
-            }
-
-            try newContent.write(to: url, atomically: true, encoding: .utf8)
-        } catch {
-            // For this baby step, silently ignore write errors
-        }
-    }
-
     func lookupCoordinates() async {
         let q = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return }
@@ -278,7 +208,147 @@ private struct StaticItineraryHeader9999: View {
     }
 }
 
-struct TestLandmarkInfoView: View {
+private struct SearchFieldWithSuggestions: View {
+    @ObservedObject var model: LandmarkInfoViewModel
+    @ObservedObject var autocomplete: AutocompleteViewModel
+    @Binding var textFieldHeight: CGFloat
+
+    var body: some View {
+        TextField("Enter landmark name", text: $autocomplete.query)
+            .textFieldStyle(.roundedBorder)
+            .submitLabel(.search)
+            .onSubmit { Task { await model.lookupCoordinates() } }
+            .onChange(of: autocomplete.query) { _, newValue in
+                model.name = newValue
+            }
+            .background(
+                GeometryReader { proxy in
+                    Color.clear
+                        .preference(key: TextFieldHeightKey.self, value: proxy.size.height)
+                }
+            )
+            .onPreferenceChange(TextFieldHeightKey.self) { height in
+                textFieldHeight = height
+            }
+            .overlay(alignment: .topLeading) {
+                AutocompleteOverlayList(autocomplete: autocomplete, model: model, textFieldHeight: textFieldHeight)
+            }
+    }
+}
+
+private struct AutocompleteOverlayList: View {
+    @ObservedObject var autocomplete: AutocompleteViewModel
+    @ObservedObject var model: LandmarkInfoViewModel
+    var textFieldHeight: CGFloat
+
+    var body: some View {
+        if !autocomplete.suggestions.isEmpty {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(autocomplete.suggestions.enumerated()), id: \.offset) { _, suggestion in
+                        Button {
+                            let chosen = suggestion.title
+                            autocomplete.query = chosen
+                            model.name = chosen
+                            Task {
+                                if let item = await autocomplete.resolve(suggestion) {
+                                    let coord = item.location.coordinate
+                                    model.latitude = coord.latitude
+                                    model.longitude = coord.longitude
+                                    if let resolved = item.name, !resolved.isEmpty {
+                                        autocomplete.query = resolved
+                                        model.name = resolved
+                                    }
+                                } else {
+                                    await model.lookupCoordinates()
+                                }
+                                autocomplete.suggestions = []
+                            }
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(suggestion.title)
+                                    .font(.body)
+                                if !suggestion.subtitle.isEmpty {
+                                    Text(suggestion.subtitle)
+                                        .font(.footnote)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .padding(8)
+                        }
+                        .buttonStyle(.plain)
+                        Divider()
+                    }
+                }
+            }
+            .frame(height: 216)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(.quaternary))
+            .offset(y: textFieldHeight + 36)
+            .zIndex(10)
+        }
+    }
+}
+
+private struct MapPreviewView: View {
+    var name: String
+    var latitude: Double
+    var longitude: Double
+    @Binding var cameraPosition: MapCameraPosition
+
+    var body: some View {
+        let coord = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+        let pins = [PlacePin(name: name.isEmpty ? "Selected Place" : name, coordinate: coord)]
+        Map(position: $cameraPosition) {
+            ForEach(pins) { pin in
+                Marker(pin.name.isEmpty ? "Selected Place" : pin.name, coordinate: pin.coordinate)
+                    .tint(.red)
+            }
+        }
+        .frame(height: 220)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .padding(.bottom, 8)
+    }
+}
+
+private struct DescriptionSectionView: View {
+    let generator: DescriptionGenerator?
+    let isGenerating: Bool
+
+    var body: some View {
+        if let gen = generator {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Description").bold()
+
+                if let text = gen.description {
+                    ScrollView {
+                        Text(text)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 4)
+                    }
+                } else if isGenerating {
+                    VStack {
+                        Spacer()
+                        ProgressView("Generating…")
+                        Spacer()
+                    }
+                } else if let error = gen.error {
+                    ScrollView {
+                        Text("Error: \(error.localizedDescription)")
+                            .foregroundStyle(.red)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 4)
+                    }
+                }
+            }
+            .padding(12)
+            .frame(height: 220)
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+        }
+    }
+}
+
+struct LandmarkInfoView: View {
     @StateObject private var model = LandmarkInfoViewModel()
     @StateObject private var autocomplete = AutocompleteViewModel()
     @State private var pendingLandmark: Landmark? = nil
@@ -294,6 +364,8 @@ struct TestLandmarkInfoView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var cameraPosition: MapCameraPosition = .region(MKCoordinateRegion(center: CLLocationCoordinate2D(latitude: 0, longitude: 0), span: .init(latitudeDelta: 2, longitudeDelta: 2)))
+
+    @State private var textFieldHeight: CGFloat = 0
 
     private func updateRegion() {
         let coord = CLLocationCoordinate2D(latitude: model.latitude, longitude: model.longitude)
@@ -345,6 +417,33 @@ struct TestLandmarkInfoView: View {
             canGenerate = false
         }
     }
+    
+    @MainActor
+    private func resetState() {
+        // Clear view model state
+        model.name = ""
+        model.latitude = 0
+        model.longitude = 0
+        model.generatedDescription = ""
+        model.generatedShortDescription = ""
+        
+        // Clear autocomplete
+        autocomplete.query = ""
+        autocomplete.suggestions = []
+        
+        // Clear generation state
+        descriptionGenerator = nil
+        isGeneratingDescription = false
+        
+        // Clear navigation state
+        pendingLandmark = nil
+        
+        // Reset camera
+        cameraPosition = .region(MKCoordinateRegion(center: CLLocationCoordinate2D(latitude: 0, longitude: 0), span: .init(latitudeDelta: 2, longitudeDelta: 2)))
+        
+        // Reset UI measurements
+        textFieldHeight = 0
+    }
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -355,13 +454,7 @@ struct TestLandmarkInfoView: View {
                         .font(.title2).bold()
 
                     HStack(spacing: 8) {
-                        TextField("Enter landmark name", text: $autocomplete.query)
-                            .textFieldStyle(.roundedBorder)
-                            .submitLabel(.search)
-                            .onSubmit { Task { await model.lookupCoordinates() } }
-                            .onChange(of: autocomplete.query) { _, newValue in
-                                model.name = newValue
-                            }
+                        SearchFieldWithSuggestions(model: model, autocomplete: autocomplete, textFieldHeight: $textFieldHeight)
                         Button("Search") {
                             Task {
                                 await model.lookupCoordinates()
@@ -375,99 +468,13 @@ struct TestLandmarkInfoView: View {
                     }
                     .onChange(of: model.latitude) { updateRegion() }
                     .onChange(of: model.longitude) { updateRegion() }
-
-                    if !autocomplete.suggestions.isEmpty {
-                        ScrollView {
-                            VStack(alignment: .leading, spacing: 0) {
-                                ForEach(Array(autocomplete.suggestions.enumerated()), id: \.offset) { _, suggestion in
-                                    Button {
-                                        // Immediately reflect the selection in the input field
-                                        let chosen = suggestion.title
-                                        autocomplete.query = chosen
-                                        model.name = chosen
-                                        Task {
-                                            if let item = await autocomplete.resolve(suggestion) {
-                                                let coord = item.location.coordinate
-                                                model.latitude = coord.latitude
-                                                model.longitude = coord.longitude
-                                                // Optionally refine with the resolved name if available
-                                                if let resolved = item.name, !resolved.isEmpty {
-                                                    autocomplete.query = resolved
-                                                    model.name = resolved
-                                                }
-                                            } else {
-                                                // Fallback: trigger a search using the chosen text
-                                                await model.lookupCoordinates()
-                                            }
-                                            // Dismiss suggestions after selection
-                                            autocomplete.suggestions = []
-                                        }
-                                    } label: {
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(suggestion.title)
-                                                .font(.body)
-                                            if !suggestion.subtitle.isEmpty {
-                                                Text(suggestion.subtitle)
-                                                    .font(.footnote)
-                                                    .foregroundStyle(.secondary)
-                                            }
-                                        }
-                                        .padding(8)
-                                    }
-                                    .buttonStyle(.plain)
-                                    Divider()
-                                }
-                            }
-                        }
-                        .frame(height: 168) // ~3 rows tall; scroll for more
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.quaternary))
-                        .padding(.vertical, 4)
-                        .zIndex(1)
-                    }
+                    .zIndex(autocomplete.suggestions.isEmpty ? 0 : 1000)
 
                     if model.latitude != 0 || model.longitude != 0 {
-                        let pins = [PlacePin(name: model.name.isEmpty ? "Selected Place" : model.name, coordinate: CLLocationCoordinate2D(latitude: model.latitude, longitude: model.longitude))]
-                        Map(position: $cameraPosition) {
-                            ForEach(pins) { pin in
-                                Marker(pin.name.isEmpty ? "Selected Place" : pin.name, coordinate: pin.coordinate)
-                                    .tint(.red)
-                            }
-                        }
-                        .frame(height: 220)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .padding(.bottom, 8)
+                        MapPreviewView(name: model.name, latitude: model.latitude, longitude: model.longitude, cameraPosition: $cameraPosition)
                     }
 
-                    if let gen = descriptionGenerator {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Description")
-
-                            if let text = gen.description {
-                                ScrollView {
-                                    Text(text)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .padding(.vertical, 4)
-                                }
-                            } else if isGeneratingDescription {
-                                VStack {
-                                    Spacer()
-                                    ProgressView("Generating…")
-                                    Spacer()
-                                }
-                            } else if let error = gen.error {
-                                ScrollView {
-                                    Text("Error: \(error.localizedDescription)")
-                                        .foregroundStyle(.red)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .padding(.vertical, 4)
-                                }
-                            }
-                        }
-                        .padding(12)
-                        .frame(height: 220)
-                        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
-                    }
+                    DescriptionSectionView(generator: descriptionGenerator, isGenerating: isGeneratingDescription)
 
                     Button("Explore") {
                         guard let data = model.currentJSON.data(using: .utf8) else { return }
@@ -499,10 +506,6 @@ struct TestLandmarkInfoView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(model.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.generatedDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
-                    Button("Save to landmarkData") { model.saveCurrentToLandmarkData() }
-                        .buttonStyle(.bordered)
-                        .disabled(model.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
                 }
                 .padding(.horizontal)
                 .padding(.top, 120)
@@ -511,6 +514,9 @@ struct TestLandmarkInfoView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task {
             await maybePrewarmIfAvailable()
+        }
+        .onAppear {
+            resetState()
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
@@ -521,16 +527,10 @@ struct TestLandmarkInfoView: View {
             if canGenerate && didPrewarm {
                 Image(systemName: "sparkles")
                     .font(.title3)
-                    .foregroundStyle(.tint)
-                    .padding([.top, .leading], 8)
+                    .foregroundStyle(isGeneratingDescription ? Color(hue: 0.28, saturation: 0.95, brightness: 0.95) : Color.accentColor)
+                    .padding(.top, 120)
+                    .padding(.leading, 16)
                     .accessibilityHidden(true)
-            }
-        }
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button(action: { dismiss() }) {
-                    Label("Back", systemImage: "chevron.left")
-                }
             }
         }
         .toolbarBackground(.hidden, for: ToolbarPlacement.navigationBar)
@@ -543,6 +543,7 @@ struct TestLandmarkInfoView: View {
 
 #Preview {
     NavigationStack {
-        TestLandmarkInfoView()
+        LandmarkInfoView()
     }
 }
+
