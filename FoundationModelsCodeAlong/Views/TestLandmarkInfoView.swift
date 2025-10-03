@@ -1,6 +1,7 @@
 import SwiftUI
 import Combine
 import MapKit
+import FoundationModels
 
 private struct PlacePin: Identifiable {
     let id = UUID()
@@ -99,14 +100,16 @@ final class LandmarkInfoViewModel: ObservableObject {
     @Published var name: String = ""
     @Published var latitude: Double = 0
     @Published var longitude: Double = 0
+    @Published var generatedDescription: String = ""
 
     var currentJSON: String {
         let escapedName = Self.escapeJSONString(name)
         let lat = String(format: "%.5f", locale: Locale(identifier: "en_US_POSIX"), latitude)
         let lon = String(format: "%.5f", locale: Locale(identifier: "en_US_POSIX"), longitude)
+        let escapedDesc = Self.escapeJSONString(generatedDescription)
         return """
         {
-        \"name\": \"\(escapedName)\",\n        \"continent\": \"\",\n        \"id\": 0,\n        \"placeID\": \"\",\n        \"longitude\": \(lon),\n        \"latitude\": \(lat),\n        \"span\": 0,\n        \"description\": \"\",\n        \"shortDescription\": \"\"\n        }
+        \"name\": \"\(escapedName)\",\n        \"continent\": \"\",\n        \"id\": 0,\n        \"placeID\": \"\",\n        \"longitude\": \(lon),\n        \"latitude\": \(lat),\n        \"span\": 0,\n        \"description\": \"\(escapedDesc)\",\n        \"shortDescription\": \"\"\n        }
         """
     }
 
@@ -233,12 +236,57 @@ struct TestLandmarkInfoView: View {
     @StateObject private var autocomplete = AutocompleteViewModel()
     @State private var pendingLandmark: Landmark? = nil
 
+    @State private var descriptionGenerator: DescriptionGenerator? = nil
+    @State private var isGeneratingDescription = false
+    
+    @State private var languageModelAvailability = SystemLanguageModel.default.availability
+    
+    @State private var canGenerate = false
+    @State private var didPrewarm = false
+    @Environment(\.scenePhase) private var scenePhase
+
     @State private var cameraPosition: MapCameraPosition = .region(MKCoordinateRegion(center: CLLocationCoordinate2D(latitude: 0, longitude: 0), span: .init(latitudeDelta: 2, longitudeDelta: 2)))
 
     private func updateRegion() {
         let coord = CLLocationCoordinate2D(latitude: model.latitude, longitude: model.longitude)
         guard CLLocationCoordinate2DIsValid(coord), coord.latitude != 0 || coord.longitude != 0 else { return }
         cameraPosition = .region(MKCoordinateRegion(center: coord, span: .init(latitudeDelta: 2, longitudeDelta: 2)))
+    }
+
+    @MainActor
+    private func startDescriptionGeneration() async {
+        let trimmed = model.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        let generator = DescriptionGenerator(name: trimmed)
+        descriptionGenerator = generator
+        isGeneratingDescription = true
+        await generator.generateDescription()
+        model.generatedDescription = generator.description ?? ""
+        isGeneratingDescription = false
+    }
+
+    @MainActor
+    private func refreshModelAvailability() {
+        languageModelAvailability = SystemLanguageModel.default.availability
+    }
+
+    @MainActor
+    private func maybePrewarmIfAvailable() async {
+        refreshModelAvailability()
+        switch languageModelAvailability {
+        case .available:
+            canGenerate = true
+            if !didPrewarm {
+                // Create a temporary generator solely to warm up the model.
+                let warmup = DescriptionGenerator(name: "Warmup")
+                // If prewarmModel is async in your implementation, prefer: `await warmup.prewarmModel()`
+                warmup.prewarmModel()
+                didPrewarm = true
+            }
+        default:
+            canGenerate = false
+        }
     }
 
     var body: some View {
@@ -254,7 +302,14 @@ struct TestLandmarkInfoView: View {
                     .onChange(of: autocomplete.query) { _, newValue in
                         model.name = newValue
                     }
-                Button("Search") { Task { await model.lookupCoordinates() } }
+                Button("Search") {
+                    Task {
+                        await model.lookupCoordinates()
+                        if canGenerate {
+                            await startDescriptionGeneration()
+                        }
+                    }
+                }
                     .buttonStyle(.borderedProminent)
                     .disabled(model.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
@@ -324,6 +379,37 @@ struct TestLandmarkInfoView: View {
                 .padding(.bottom, 8)
             }
 
+            if let gen = descriptionGenerator {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Generated Description")
+                        .font(.headline)
+
+                    if let text = gen.description {
+                        ScrollView {
+                            Text(text)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.vertical, 4)
+                        }
+                    } else if isGeneratingDescription {
+                        VStack {
+                            Spacer()
+                            ProgressView("Generating…")
+                            Spacer()
+                        }
+                    } else if let error = gen.error {
+                        ScrollView {
+                            Text("Error: \(error.localizedDescription)")
+                                .foregroundStyle(.red)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.vertical, 4)
+                        }
+                    }
+                }
+                .padding(12)
+                .frame(height: 220)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+            }
+
             Text("Resulting JSON")
                 .font(.headline)
             ScrollView {
@@ -371,6 +457,23 @@ struct TestLandmarkInfoView: View {
                 LandmarkDetailView(landmark: landmark)
             }
             // ... rest of the body content ...
+        }
+        .task {
+            await maybePrewarmIfAvailable()
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active {
+                Task { await maybePrewarmIfAvailable() }
+            }
+        }
+        .overlay(alignment: .topLeading) {
+            if canGenerate && didPrewarm {
+                Image(systemName: "sparkles")
+                    .font(.title3)
+                    .foregroundStyle(.tint)
+                    .padding([.top, .leading], 8)
+                    .accessibilityHidden(true)
+            }
         }
         .padding()
     }
