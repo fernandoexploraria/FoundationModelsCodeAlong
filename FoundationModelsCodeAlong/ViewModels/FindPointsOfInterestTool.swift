@@ -8,6 +8,7 @@ A tool to use alongside the models to find points of interest for a landmark.
 import FoundationModels
 import MapKit
 import SwiftUI
+import Foundation
 
 @Observable
 final class FindPointsOfInterestTool: Tool {
@@ -48,6 +49,18 @@ extension Category {
     }
 }
 
+extension String {
+    /// Returns a Latin transliteration of the string. If transliteration fails, returns `self`.
+    /// When `stripDiacritics` is true, removes combining marks to improve readability (ASCII-ish).
+    func latinTransliteration(stripDiacritics: Bool = true) -> String {
+        // Convert to Latin script (e.g., Arabic → Latin)
+        let latin = self.applyingTransform(.toLatin, reverse: false) ?? self
+        guard stripDiacritics else { return latin }
+        // Remove combining marks to approximate ASCII when possible
+        return latin.applyingTransform(.stripCombiningMarks, reverse: false) ?? latin
+    }
+}
+
 func getSuggestions(category: Category, latitude: Double, longitude: Double) async -> [String] {
     return await MapKitSearch(latitude: latitude, longitude: longitude, category: category)
 }
@@ -67,7 +80,13 @@ private func MapKitSearch(latitude: Double, longitude: Double, category: Categor
     let search = MKLocalSearch(request: request)
     do {
         let response = try await search.start()
-        let names = response.mapItems.prefix(3).compactMap { $0.name }
+        let names = response.mapItems
+            .prefix(3)
+            .compactMap { $0.name }
+            .map { name in
+                let latin = name.latinTransliteration()
+                return name == latin ? name : "\(name) (\(latin))"
+            }
         return Array(names)
     } catch {
         // print("Search error: \(error)")

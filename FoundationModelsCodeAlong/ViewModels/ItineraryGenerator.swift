@@ -20,9 +20,12 @@ final class ItineraryGenerator {
         self.landmark = landmark
         let pointOfInterestTool = FindPointsOfInterestTool(landmark: landmark)
         let instructions = Instructions {
-                 "Your job is to create an itinerary for the user."
-                 "For each day, you must suggest one hotel and one restaurant."
-                 "Always use the 'findPointsOfInterest' tool to find hotels and restaurant in \(landmark.name)"
+            "Your job is to create an itinerary for the user."
+            "For each day, you must suggest one hotel and one restaurant."
+            "Always use the 'findPointsOfInterest' tool to find hotels and restaurant in \(landmark.name)."
+            "Tool results may include names in non-Latin scripts (e.g., Arabic, Chinese). Treat these as safe proper nouns."
+            "When presenting names to an English-speaking audience, include the Latin transliteration in parentheses if provided (e.g., 'مطعم... (Mat'am ...)')."
+            "Do not discard or alter tool results beyond adding transliteration for readability."
         }
         self.session = LanguageModelSession(
              tools: [pointOfInterestTool],
@@ -56,3 +59,4 @@ final class ItineraryGenerator {
         session.prewarm(promptPrefix: Prompt {"Generate a 3-day itinerary to \(landmark.name)."})
     }
 }
+

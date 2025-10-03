@@ -19,7 +19,7 @@ private struct TextFieldHeightKey: PreferenceKey {
 // Autocomplete support using MKLocalSearchCompleter
 @MainActor
 final class AutocompleteViewModel: NSObject, ObservableObject, MKLocalSearchCompleterDelegate {
-    @Published var query: String = "" { didSet { if isUserTyping { completer.queryFragment = query } } }
+    @Published var query: String = ""
     @Published var suggestions: [MKLocalSearchCompletion] = []
     @Published var isUserTyping: Bool = true
 
@@ -30,15 +30,35 @@ final class AutocompleteViewModel: NSObject, ObservableObject, MKLocalSearchComp
         c.resultTypes = [.address, .pointOfInterest] // locations only (addresses & POIs); exclude generic queries
         return c
     }()
+    private var cancellables = Set<AnyCancellable>()
 
     override init() {
         super.init()
         completer.delegate = self
         completer.region = worldRegion
+
+        // Debounce the user's typing before updating the completer
+        $query
+            .removeDuplicates()
+            .debounce(for: .milliseconds(200), scheduler: DispatchQueue.main)
+            .sink { [weak self] text in
+                guard let self else { return }
+                guard self.isUserTyping else { return } // Skip programmatic commits
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.isEmpty {
+                    self.suggestions = []
+                    self.completer.queryFragment = ""
+                } else {
+                    self.completer.queryFragment = trimmed
+                }
+            }
+            .store(in: &cancellables)
     }
 
     func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
-        self.suggestions = completer.results
+        withAnimation(.default) {
+            self.suggestions = completer.results
+        }
     }
 
     func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
@@ -489,10 +509,10 @@ struct LandmarkInfoView: View {
                         .font(.title2).bold()
 
                     HStack(spacing: 8) {
-                        SearchFieldWithSuggestions(model: model, autocomplete: autocomplete, textFieldHeight: $textFieldHeight, onSuggestionResolved: { 
-                            if canGenerate { 
-                                await startDescriptionGeneration() 
-                            } 
+                        SearchFieldWithSuggestions(model: model, autocomplete: autocomplete, textFieldHeight: $textFieldHeight, onSuggestionResolved: {
+                            if canGenerate {
+                                await startDescriptionGeneration()
+                            }
                         })
                         Button("Search") {
                             Task {
@@ -585,3 +605,4 @@ struct LandmarkInfoView: View {
         LandmarkInfoView()
     }
 }
+
