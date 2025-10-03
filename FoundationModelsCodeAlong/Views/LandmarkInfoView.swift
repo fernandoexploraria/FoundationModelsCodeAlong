@@ -19,8 +19,9 @@ private struct TextFieldHeightKey: PreferenceKey {
 // Autocomplete support using MKLocalSearchCompleter
 @MainActor
 final class AutocompleteViewModel: NSObject, ObservableObject, MKLocalSearchCompleterDelegate {
-    @Published var query: String = "" { didSet { completer.queryFragment = query } }
+    @Published var query: String = "" { didSet { if isUserTyping { completer.queryFragment = query } } }
     @Published var suggestions: [MKLocalSearchCompletion] = []
+    @Published var isUserTyping: Bool = true
 
     private let completer: MKLocalSearchCompleter = {
         let c = MKLocalSearchCompleter()
@@ -50,6 +51,9 @@ final class AutocompleteViewModel: NSObject, ObservableObject, MKLocalSearchComp
             return nil
         }
     }
+
+    func beginProgrammaticCommit() { isUserTyping = false }
+    func resumeUserTyping() { isUserTyping = true }
 }
 
 // Helper to decode the JSON we show on screen
@@ -212,14 +216,20 @@ private struct SearchFieldWithSuggestions: View {
     @ObservedObject var model: LandmarkInfoViewModel
     @ObservedObject var autocomplete: AutocompleteViewModel
     @Binding var textFieldHeight: CGFloat
+    let onSuggestionResolved: () async -> Void
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         TextField("Enter landmark name", text: $autocomplete.query)
             .textFieldStyle(.roundedBorder)
             .submitLabel(.search)
+            .focused($isFocused)
             .onSubmit { Task { await model.lookupCoordinates() } }
             .onChange(of: autocomplete.query) { _, newValue in
                 model.name = newValue
+            }
+            .onChange(of: isFocused) { _, focused in
+                if focused { autocomplete.resumeUserTyping() }
             }
             .background(
                 GeometryReader { proxy in
@@ -231,7 +241,7 @@ private struct SearchFieldWithSuggestions: View {
                 textFieldHeight = height
             }
             .overlay(alignment: .topLeading) {
-                AutocompleteOverlayList(autocomplete: autocomplete, model: model, textFieldHeight: textFieldHeight)
+                AutocompleteOverlayList(autocomplete: autocomplete, model: model, textFieldHeight: textFieldHeight, onSuggestionResolved: onSuggestionResolved, onCommitSelection: { isFocused = false })
             }
     }
 }
@@ -240,6 +250,8 @@ private struct AutocompleteOverlayList: View {
     @ObservedObject var autocomplete: AutocompleteViewModel
     @ObservedObject var model: LandmarkInfoViewModel
     var textFieldHeight: CGFloat
+    let onSuggestionResolved: () async -> Void
+    let onCommitSelection: () -> Void
 
     var body: some View {
         if !autocomplete.suggestions.isEmpty {
@@ -248,6 +260,8 @@ private struct AutocompleteOverlayList: View {
                     ForEach(Array(autocomplete.suggestions.enumerated()), id: \.offset) { _, suggestion in
                         Button {
                             let chosen = suggestion.title
+                            autocomplete.beginProgrammaticCommit()
+                            onCommitSelection()
                             autocomplete.query = chosen
                             model.name = chosen
                             Task {
@@ -255,14 +269,11 @@ private struct AutocompleteOverlayList: View {
                                     let coord = item.location.coordinate
                                     model.latitude = coord.latitude
                                     model.longitude = coord.longitude
-                                    if let resolved = item.name, !resolved.isEmpty {
-                                        autocomplete.query = resolved
-                                        model.name = resolved
-                                    }
                                 } else {
                                     await model.lookupCoordinates()
                                 }
                                 autocomplete.suggestions = []
+                                await onSuggestionResolved()
                             }
                         } label: {
                             VStack(alignment: .leading, spacing: 2) {
@@ -454,7 +465,11 @@ struct LandmarkInfoView: View {
                         .font(.title2).bold()
 
                     HStack(spacing: 8) {
-                        SearchFieldWithSuggestions(model: model, autocomplete: autocomplete, textFieldHeight: $textFieldHeight)
+                        SearchFieldWithSuggestions(model: model, autocomplete: autocomplete, textFieldHeight: $textFieldHeight, onSuggestionResolved: { 
+                            if canGenerate { 
+                                await startDescriptionGeneration() 
+                            } 
+                        })
                         Button("Search") {
                             Task {
                                 await model.lookupCoordinates()
@@ -546,4 +561,3 @@ struct LandmarkInfoView: View {
         LandmarkInfoView()
     }
 }
-
