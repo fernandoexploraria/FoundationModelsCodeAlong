@@ -50,8 +50,8 @@ extension Category {
 }
 
 extension String {
-    /// Returns a Latin transliteration of the string. If transliteration fails, returns `self`.
-    /// When `stripDiacritics` is true, removes combining marks to improve readability (ASCII-ish).
+    // Returns a Latin transliteration of the string. If transliteration fails, returns `self`.
+    // When `stripDiacritics` is true, removes combining marks to improve readability (ASCII-ish).
     func latinTransliteration(stripDiacritics: Bool = true) -> String {
         // Convert to Latin script (e.g., Arabic → Latin)
         let latin = self.applyingTransform(.toLatin, reverse: false) ?? self
@@ -82,11 +82,7 @@ private func MapKitSearch(latitude: Double, longitude: Double, category: Categor
         let response = try await search.start()
         let names = response.mapItems
             .prefix(3)
-            .compactMap { $0.name }
-            .map { name in
-                let latin = name.latinTransliteration()
-                return name == latin ? name : "\(name) (\(latin))"
-            }
+            .compactMap { $0.name?.latinTransliteration() }
         return Array(names)
     } catch {
         // print("Search error: \(error)")

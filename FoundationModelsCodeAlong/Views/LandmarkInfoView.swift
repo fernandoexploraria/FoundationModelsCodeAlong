@@ -144,6 +144,7 @@ final class LandmarkInfoViewModel: ObservableObject {
     @Published var longitude: Double = 0
     @Published var generatedDescription: String = ""
     @Published var generatedShortDescription: String = ""
+    @Published var generatedID: Int = 9999
 
     var currentJSON: String {
         let escapedName = Self.escapeJSONString(name)
@@ -153,7 +154,7 @@ final class LandmarkInfoViewModel: ObservableObject {
         let escapedShort = Self.escapeJSONString(generatedShortDescription)
         return """
         {
-        \"name\": \"\(escapedName)\",\n        \"continent\": \"\",\n        \"id\": 0,\n        \"placeID\": \"\",\n        \"longitude\": \(lon),\n        \"latitude\": \(lat),\n        \"span\": 0,\n        \"description\": \"\(escapedDesc)\",\n        \"shortDescription\": \"\(escapedShort)\"\n        }
+        \"name\": \"\(escapedName)\",\n        \"continent\": \"\",\n        \"id\": \(generatedID),\n        \"placeID\": \"\",\n        \"longitude\": \(lon),\n        \"latitude\": \(lat),\n        \"span\": 1,\n        \"description\": \"\(escapedDesc)\",\n        \"shortDescription\": \"\(escapedShort)\"\n        }
         """
     }
 
@@ -479,6 +480,7 @@ struct LandmarkInfoView: View {
         model.longitude = 0
         model.generatedDescription = ""
         model.generatedShortDescription = ""
+        model.generatedID = 9999
         
         // Clear autocomplete
         autocomplete.query = ""
@@ -528,6 +530,21 @@ struct LandmarkInfoView: View {
                     .onChange(of: model.latitude) { updateRegion() }
                     .onChange(of: model.longitude) { updateRegion() }
                     .zIndex(autocomplete.suggestions.isEmpty ? 0 : 1000)
+                    
+                    // Show the JSON we are producing
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Generated JSON").bold()
+                        ScrollView {
+                            Text(model.currentJSON)
+                                .font(.system(.footnote, design: .monospaced))
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.vertical, 4)
+                        }
+                        .frame(height: 180)
+                    }
+                    .padding(12)
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
 
                     if model.latitude != 0 || model.longitude != 0 {
                         MapPreviewView(name: model.name, latitude: model.latitude, longitude: model.longitude, cameraPosition: $cameraPosition)
@@ -543,18 +560,16 @@ struct LandmarkInfoView: View {
                                 if let pid = info.placeID, !pid.isEmpty { return pid }
                                 return nil
                             }()
-                            // Provide sensible defaults for fields not set by the generator yet
-                            let spanValue = info.span == 0 ? 10.0 : info.span
-                            let displayID = (info.id <= 0) ? 9999 : info.id
+                            // Use span directly from the JSON
                             let lm = Landmark(
-                                id: displayID,
+                                id: info.id,
                                 name: info.name,
                                 continent: info.continent,
                                 description: info.description,
                                 shortDescription: info.shortDescription,
                                 latitude: info.latitude,
                                 longitude: info.longitude,
-                                span: spanValue,
+                                span: info.span,
                                 placeID: cleanedPlaceID
                             )
                             pendingLandmark = lm
