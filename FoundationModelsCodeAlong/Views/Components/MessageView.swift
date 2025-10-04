@@ -27,7 +27,7 @@ struct MessageView: View {
                     .padding(5)
             } else if let message {
                 Text("\(message)")
-                    .foregroundStyle(.black)
+                    .foregroundStyle(.primary)
                     .font(.title3)
                     .padding(15)
             }
@@ -40,3 +40,4 @@ struct MessageView: View {
         }
     }
 }
+
