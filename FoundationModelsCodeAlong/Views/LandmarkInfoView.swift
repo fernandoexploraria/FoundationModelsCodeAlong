@@ -295,7 +295,7 @@ struct LandmarkInfoView: View {
         let trimmed = model.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        let generator = DescriptionGenerator(name: model.generatedPlaceID ?? "")
+        let generator = DescriptionGenerator(name: trimmed)
         descriptionGenerator = generator
         isGeneratingDescription = true
         await generator.generateDescription()
@@ -325,7 +325,7 @@ struct LandmarkInfoView: View {
             canGenerate = true
             if !didPrewarm {
                 // Create a temporary generator solely to warm up the model.
-                let warmup = DescriptionGenerator(name: model.generatedPlaceID ?? "warmup-placeholder")
+                let warmup = DescriptionGenerator(name: model.name.isEmpty ? "warmup-placeholder" : model.name)
                 // If prewarmModel is async in your implementation, prefer: `await warmup.prewarmModel()`
                 warmup.prewarmModel()
                 didPrewarm = true
