@@ -53,8 +53,7 @@ final class ItineraryGenerator {
     }
 
     func prewarmModel() {
-//        session.prewarm(promptPrefix: Prompt {"Generate a 3-day itinerary to \(landmark.name)."})
-        session.prewarm()
+        session.prewarm(promptPrefix: Prompt {"Generate a 3-day itinerary to \(landmark.name)."})
     }
 }
 

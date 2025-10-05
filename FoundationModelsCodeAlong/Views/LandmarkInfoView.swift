@@ -9,84 +9,6 @@ private struct PlacePin: Identifiable {
     let coordinate: CLLocationCoordinate2D
 }
 
-private struct TextFieldHeightKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
-    }
-}
-
-// Autocomplete support using MKLocalSearchCompleter
-@MainActor
-final class AutocompleteViewModel: NSObject, ObservableObject, MKLocalSearchCompleterDelegate {
-    @Published var query: String = ""
-    @Published var suggestions: [MKLocalSearchCompletion] = []
-    @Published var isUserTyping: Bool = true
-
-    private let worldRegion = MKCoordinateRegion(center: CLLocationCoordinate2D(latitude: 0, longitude: 0), span: MKCoordinateSpan(latitudeDelta: 180, longitudeDelta: 360))
-
-    private let completer: MKLocalSearchCompleter = {
-        let c = MKLocalSearchCompleter()
-        c.resultTypes = [.address, .pointOfInterest] // locations only (addresses & POIs); exclude generic queries
-        return c
-    }()
-    private var cancellables = Set<AnyCancellable>()
-
-    override init() {
-        super.init()
-        completer.delegate = self
-        completer.region = worldRegion
-
-        // Debounce the user's typing before updating the completer
-        $query
-            .removeDuplicates()
-            .debounce(for: .milliseconds(200), scheduler: DispatchQueue.main)
-            .sink { [weak self] text in
-                guard let self else { return }
-                guard self.isUserTyping else { return } // Skip programmatic commits
-                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                if trimmed.isEmpty {
-                    self.suggestions = []
-                    self.completer.queryFragment = ""
-                } else {
-                    self.completer.queryFragment = trimmed
-                }
-            }
-            .store(in: &cancellables)
-    }
-
-    func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
-        withAnimation(.default) {
-            self.suggestions = completer.results
-        }
-    }
-
-    func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
-        self.suggestions = []
-    }
-
-    func resolve(_ completion: MKLocalSearchCompletion) async -> MKMapItem? {
-        let request = MKLocalSearch.Request(completion: completion)
-        do {
-            let response = try await MKLocalSearch(request: request).start()
-            return response.mapItems.first
-        } catch {
-            return nil
-        }
-    }
-
-    func beginProgrammaticCommit() { isUserTyping = false }
-    func resumeUserTyping() { isUserTyping = true }
-
-    func setBiasRegion(_ region: MKCoordinateRegion?) {
-        if let region {
-            completer.region = region
-        } else {
-            completer.region = worldRegion
-        }
-    }
-}
-
 // Helper to decode the JSON we show on screen
 private struct GeneratedInfo: Decodable {
     let name: String
@@ -100,43 +22,6 @@ private struct GeneratedInfo: Decodable {
     let shortDescription: String
 }
 
-struct ExampleDoc: Codable {
-    let name: String
-    let continent: String
-    let id: Int
-    let placeID: String
-    let longitude: Double
-    let latitude: Double
-    let span: Double
-    let description: String
-    let shortdescription: String
-
-    private enum CodingKeys: String, CodingKey {
-        case name
-        case continent
-        case id
-        case placeID
-        case longitude
-        case latitude
-        case span
-        case description
-        case shortdescription
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(name, forKey: .name)
-        try container.encode(continent, forKey: .continent)
-        try container.encode(id, forKey: .id)
-        try container.encode(placeID, forKey: .placeID)
-        try container.encode(longitude, forKey: .longitude)
-        try container.encode(latitude, forKey: .latitude)
-        try container.encode(span, forKey: .span)
-        try container.encode(description, forKey: .description)
-        try container.encode(shortdescription, forKey: .shortdescription)
-    }
-}
-
 @MainActor
 final class LandmarkInfoViewModel: ObservableObject {
     @Published var name: String = ""
@@ -145,6 +30,7 @@ final class LandmarkInfoViewModel: ObservableObject {
     @Published var generatedDescription: String = ""
     @Published var generatedShortDescription: String = ""
     @Published var generatedID: Int = 9999
+    @Published var generatedPlaceID: String? = nil
 
     var currentJSON: String {
         let escapedName = Self.escapeJSONString(name)
@@ -152,31 +38,11 @@ final class LandmarkInfoViewModel: ObservableObject {
         let lon = String(format: "%.5f", locale: Locale(identifier: "en_US_POSIX"), longitude)
         let escapedDesc = Self.escapeJSONString(generatedDescription)
         let escapedShort = Self.escapeJSONString(generatedShortDescription)
+        let escapedPlaceID = Self.escapeJSONString(generatedPlaceID ?? "")
         return """
         {
-        \"name\": \"\(escapedName)\",\n        \"continent\": \"\",\n        \"id\": \(generatedID),\n        \"placeID\": \"\",\n        \"longitude\": \(lon),\n        \"latitude\": \(lat),\n        \"span\": 1,\n        \"description\": \"\(escapedDesc)\",\n        \"shortDescription\": \"\(escapedShort)\"\n        }
+        \"name\": \"\(escapedName)\",\n        \"continent\": \"\",\n        \"id\": \(generatedID),\n        \"placeID\": \"\(escapedPlaceID)\",\n        \"longitude\": \(lon),\n        \"latitude\": \(lat),\n        \"span\": 1,\n        \"description\": \"\(escapedDesc)\",\n        \"shortDescription\": \"\(escapedShort)\"\n        }
         """
-    }
-
-    func lookupCoordinates(biasRegion: MKCoordinateRegion? = nil) async {
-        let q = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !q.isEmpty else { return }
-        let request = MKLocalSearch.Request()
-        if let biasRegion {
-            request.region = biasRegion
-        }
-        request.naturalLanguageQuery = q
-        let search = MKLocalSearch(request: request)
-        do {
-            let response = try await search.start()
-            if let item = response.mapItems.first {
-                let coord = item.location.coordinate
-                self.latitude = coord.latitude
-                self.longitude = coord.longitude
-            }
-        } catch {
-            // Ignore errors for this baby step; leave lat/long as-is
-        }
     }
 
     private static func escapeJSONString(_ s: String) -> String {
@@ -247,95 +113,6 @@ private struct StaticItineraryHeader9999: View {
     }
 }
 
-private struct SearchFieldWithSuggestions: View {
-    @ObservedObject var model: LandmarkInfoViewModel
-    @ObservedObject var autocomplete: AutocompleteViewModel
-    @Binding var textFieldHeight: CGFloat
-    let onSuggestionResolved: () async -> Void
-    @FocusState private var isFocused: Bool
-
-    var body: some View {
-        TextField("Enter landmark name", text: $autocomplete.query)
-            .textFieldStyle(.roundedBorder)
-            .submitLabel(.search)
-            .focused($isFocused)
-            .onSubmit { Task { await model.lookupCoordinates() } }
-            .onChange(of: autocomplete.query) { _, newValue in
-                model.name = newValue
-            }
-            .onChange(of: isFocused) { _, focused in
-                if focused { autocomplete.resumeUserTyping() }
-            }
-            .background(
-                GeometryReader { proxy in
-                    Color.clear
-                        .preference(key: TextFieldHeightKey.self, value: proxy.size.height)
-                }
-            )
-            .onPreferenceChange(TextFieldHeightKey.self) { height in
-                textFieldHeight = height
-            }
-            .overlay(alignment: .topLeading) {
-                AutocompleteOverlayList(autocomplete: autocomplete, model: model, textFieldHeight: textFieldHeight, onSuggestionResolved: onSuggestionResolved, onCommitSelection: { isFocused = false })
-            }
-    }
-}
-
-private struct AutocompleteOverlayList: View {
-    @ObservedObject var autocomplete: AutocompleteViewModel
-    @ObservedObject var model: LandmarkInfoViewModel
-    var textFieldHeight: CGFloat
-    let onSuggestionResolved: () async -> Void
-    let onCommitSelection: () -> Void
-
-    var body: some View {
-        if !autocomplete.suggestions.isEmpty {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(autocomplete.suggestions.enumerated()), id: \.offset) { _, suggestion in
-                        Button {
-                            let chosen = suggestion.title
-                            autocomplete.beginProgrammaticCommit()
-                            onCommitSelection()
-                            autocomplete.query = chosen
-                            model.name = chosen
-                            Task {
-                                if let item = await autocomplete.resolve(suggestion) {
-                                    let coord = item.location.coordinate
-                                    model.latitude = coord.latitude
-                                    model.longitude = coord.longitude
-                                } else {
-                                    await model.lookupCoordinates()
-                                }
-                                autocomplete.suggestions = []
-                                await onSuggestionResolved()
-                            }
-                        } label: {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(suggestion.title)
-                                    .font(.body)
-                                if !suggestion.subtitle.isEmpty {
-                                    Text(suggestion.subtitle)
-                                        .font(.footnote)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            .padding(8)
-                        }
-                        .buttonStyle(.plain)
-                        Divider()
-                    }
-                }
-            }
-            .frame(height: 216)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(.quaternary))
-            .offset(y: textFieldHeight + 36)
-            .zIndex(10)
-        }
-    }
-}
-
 private struct MapPreviewView: View {
     var name: String
     var latitude: Double
@@ -396,7 +173,7 @@ private struct DescriptionSectionView: View {
 
 struct LandmarkInfoView: View {
     @StateObject private var model = LandmarkInfoViewModel()
-    @StateObject private var autocomplete = AutocompleteViewModel()
+    
     @State private var pendingLandmark: Landmark? = nil
 
     @State private var descriptionGenerator: DescriptionGenerator? = nil
@@ -411,8 +188,12 @@ struct LandmarkInfoView: View {
 
     @State private var cameraPosition: MapCameraPosition = .region(MKCoordinateRegion(center: CLLocationCoordinate2D(latitude: 0, longitude: 0), span: .init(latitudeDelta: 2, longitudeDelta: 2)))
 
-    @State private var textFieldHeight: CGFloat = 0
-    @State private var biasRegion: MKCoordinateRegion? = nil
+    // Removed the following line as per instructions:
+    // @State private var biasRegion: MKCoordinateRegion? = nil
+    
+    @State private var searchResults: [MKMapItem] = []
+    @State private var isSearching = false
+    @State private var searchMessage: String? = nil
 
     private func updateRegion() {
         let coord = CLLocationCoordinate2D(latitude: model.latitude, longitude: model.longitude)
@@ -420,11 +201,93 @@ struct LandmarkInfoView: View {
         // Map preview region (wider span)
         let mapRegion = MKCoordinateRegion(center: coord, span: .init(latitudeDelta: 2, longitudeDelta: 2))
         cameraPosition = .region(mapRegion)
-        // Bias region (city scale)
-        let citySpan = MKCoordinateSpan(latitudeDelta: 0.6, longitudeDelta: 0.6)
-        let newBias = MKCoordinateRegion(center: coord, span: citySpan)
-        biasRegion = newBias
-        autocomplete.setBiasRegion(newBias)
+        // Removed these lines as per instructions:
+        // // Bias region (city scale)
+        // let citySpan = MKCoordinateSpan(latitudeDelta: 0.6, longitudeDelta: 0.6)
+        // let newBias = MKCoordinateRegion(center: coord, span: citySpan)
+        // biasRegion = newBias
+    }
+
+    @MainActor
+    private func performSearch() async {
+        let q = model.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else {
+            searchResults = []
+            searchMessage = "Please enter a place name to search."
+            return
+        }
+        isSearching = true
+        searchMessage = nil
+        searchResults = []
+        defer { isSearching = false }
+        let request = MKLocalSearch.Request()
+        request.naturalLanguageQuery = q
+        request.resultTypes = [.pointOfInterest, .physicalFeature]
+        // Apply a POI category exclude filter to remove everyday/utilitarian places
+        let excludedCategories: [MKPointOfInterestCategory] = [
+            .atm,
+            .bank,
+            .gasStation,
+            .pharmacy,
+            .hospital,
+            .police,
+            .postOffice,
+            .school,
+            .store,
+            .restaurant,
+            .cafe,
+            .bakery,
+            .parking,
+            .carRental,
+            .evCharger,
+            .laundry,
+            .hotel
+        ]
+        request.pointOfInterestFilter = MKPointOfInterestFilter(excluding: excludedCategories)
+        do {
+            let response = try await MKLocalSearch(request: request).start()
+            let filtered = response.mapItems.compactMap { item -> MKMapItem? in
+                guard item.identifier != nil else { return nil }
+                return item
+            }
+            let topFive = Array(filtered.prefix(5))
+            searchResults = topFive
+            if topFive.isEmpty {
+                searchMessage = "No results with a verified Apple Place ID. Try a more specific query."
+            }
+        } catch {
+            searchMessage = "Search failed. Please try again."
+        }
+    }
+
+    @MainActor
+    private func select(_ item: MKMapItem) {
+        model.name = item.name ?? model.name
+
+        let coord = item.location.coordinate
+
+        model.latitude = coord.latitude
+        model.longitude = coord.longitude
+        model.generatedPlaceID = item.identifier?.rawValue
+
+        // Clear the results list and message
+        searchResults = []
+        searchMessage = nil
+
+        // Update the map region and bias
+        updateRegion()
+
+        // Keep existing behavior: generate description from the name
+        Task {
+            if canGenerate {
+                await startDescriptionGeneration()
+            }
+        }
+    }
+
+    private func subtitle(for item: MKMapItem) -> String {
+        let c = item.location.coordinate
+        return String(format: "%.4f, %.4f", c.latitude, c.longitude)
     }
 
     @MainActor
@@ -432,7 +295,7 @@ struct LandmarkInfoView: View {
         let trimmed = model.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        let generator = DescriptionGenerator(name: trimmed)
+        let generator = DescriptionGenerator(name: model.generatedPlaceID ?? "")
         descriptionGenerator = generator
         isGeneratingDescription = true
         await generator.generateDescription()
@@ -462,7 +325,7 @@ struct LandmarkInfoView: View {
             canGenerate = true
             if !didPrewarm {
                 // Create a temporary generator solely to warm up the model.
-                let warmup = DescriptionGenerator(name: "Warmup")
+                let warmup = DescriptionGenerator(name: model.generatedPlaceID ?? "warmup-placeholder")
                 // If prewarmModel is async in your implementation, prefer: `await warmup.prewarmModel()`
                 warmup.prewarmModel()
                 didPrewarm = true
@@ -481,10 +344,7 @@ struct LandmarkInfoView: View {
         model.generatedDescription = ""
         model.generatedShortDescription = ""
         model.generatedID = 9999
-        
-        // Clear autocomplete
-        autocomplete.query = ""
-        autocomplete.suggestions = []
+        model.generatedPlaceID = nil
         
         // Clear generation state
         descriptionGenerator = nil
@@ -496,10 +356,36 @@ struct LandmarkInfoView: View {
         // Reset camera
         cameraPosition = .region(MKCoordinateRegion(center: CLLocationCoordinate2D(latitude: 0, longitude: 0), span: .init(latitudeDelta: 2, longitudeDelta: 2)))
         
-        // Reset UI measurements
-        textFieldHeight = 0
-        biasRegion = nil
-        autocomplete.setBiasRegion(nil)
+        // Reset UI measurements and search state
+        // Removed the following line as per instructions:
+        // biasRegion = nil
+        searchResults = []
+        isSearching = false
+        searchMessage = nil
+    }
+    
+    private func landmarkFromCurrentJSON() -> Landmark? {
+        guard let data = model.currentJSON.data(using: .utf8) else { return nil }
+        do {
+            let info = try JSONDecoder().decode(GeneratedInfo.self, from: data)
+            let cleanedPlaceID: String? = {
+                if let pid = info.placeID, !pid.isEmpty { return pid }
+                return nil
+            }()
+            return Landmark(
+                id: info.id,
+                name: info.name,
+                continent: info.continent,
+                description: info.description,
+                shortDescription: info.shortDescription,
+                latitude: info.latitude,
+                longitude: info.longitude,
+                span: info.span,
+                placeID: cleanedPlaceID
+            )
+        } catch {
+            return nil
+        }
     }
 
     var body: some View {
@@ -511,25 +397,51 @@ struct LandmarkInfoView: View {
                         .font(.title2).bold()
 
                     HStack(spacing: 8) {
-                        SearchFieldWithSuggestions(model: model, autocomplete: autocomplete, textFieldHeight: $textFieldHeight, onSuggestionResolved: {
-                            if canGenerate {
-                                await startDescriptionGeneration()
-                            }
-                        })
+                        TextField("Enter landmark name", text: $model.name)
+                            .textFieldStyle(.roundedBorder)
+                            .submitLabel(.search)
+                            .onSubmit { Task { await performSearch() } }
+
                         Button("Search") {
-                            Task {
-                                await model.lookupCoordinates(biasRegion: biasRegion)
-                                if canGenerate {
-                                    await startDescriptionGeneration()
-                                }
-                            }
+                            Task { await performSearch() }
                         }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(model.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .buttonStyle(.borderedProminent)
+                        .disabled(model.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                     .onChange(of: model.latitude) { updateRegion() }
                     .onChange(of: model.longitude) { updateRegion() }
-                    .zIndex(autocomplete.suggestions.isEmpty ? 0 : 1000)
+
+                    if isSearching {
+                        ProgressView("Searching…")
+                            .padding(.vertical, 4)
+                    } else if !searchResults.isEmpty {
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text("Select a Place").bold().padding(.bottom, 6)
+                            ForEach(Array(searchResults.enumerated()), id: \.offset) { _, item in
+                                Button {
+                                    select(item)
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(item.name ?? "Unknown place")
+                                            .font(.body)
+                                        Text(subtitle(for: item))
+                                            .font(.footnote)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .padding(.vertical, 8)
+                                }
+                                .buttonStyle(.plain)
+                                Divider()
+                            }
+                        }
+                        .padding(12)
+                        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                    } else if let message = searchMessage {
+                        Text(message)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 4)
+                    }
                     
                     // Show the JSON we are producing
                     VStack(alignment: .leading, spacing: 8) {
@@ -545,6 +457,29 @@ struct LandmarkInfoView: View {
                     }
                     .padding(12)
                     .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                    
+                    // Parsed Landmark preview from the JSON above
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Landmark Preview").bold()
+                        if let lm = landmarkFromCurrentJSON() {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("ID: \(lm.id)")
+                                Text("Name: \(lm.name)")
+                                Text("Continent: \(lm.continent.isEmpty ? "N/A" : lm.continent)")
+                                Text("Description: \(lm.description.isEmpty ? "N/A" : lm.description)")
+                                Text("Short Description: \(lm.shortDescription.isEmpty ? "N/A" : lm.shortDescription)")
+                                Text(String(format: "Latitude: %.5f", lm.latitude))
+                                Text(String(format: "Longitude: %.5f", lm.longitude))
+                                Text(String(format: "Span: %.3f", lm.span))
+                                Text("Place ID: \(lm.placeID ?? "N/A")")
+                            }
+                        } else {
+                            Text("Landmark preview will appear here once the JSON is valid.")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(12)
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
 
                     if model.latitude != 0 || model.longitude != 0 {
                         MapPreviewView(name: model.name, latitude: model.latitude, longitude: model.longitude, cameraPosition: $cameraPosition)
@@ -553,28 +488,8 @@ struct LandmarkInfoView: View {
                     DescriptionSectionView(generator: descriptionGenerator, isGenerating: isGeneratingDescription)
 
                     Button("Explore") {
-                        guard let data = model.currentJSON.data(using: .utf8) else { return }
-                        do {
-                            let info = try JSONDecoder().decode(GeneratedInfo.self, from: data)
-                            let cleanedPlaceID: String? = {
-                                if let pid = info.placeID, !pid.isEmpty { return pid }
-                                return nil
-                            }()
-                            // Use span directly from the JSON
-                            let lm = Landmark(
-                                id: info.id,
-                                name: info.name,
-                                continent: info.continent,
-                                description: info.description,
-                                shortDescription: info.shortDescription,
-                                latitude: info.latitude,
-                                longitude: info.longitude,
-                                span: info.span,
-                                placeID: cleanedPlaceID
-                            )
+                        if let lm = landmarkFromCurrentJSON() {
                             pendingLandmark = lm
-                        } catch {
-                            // Ignore decode errors in this step
                         }
                     }
                     .buttonStyle(.borderedProminent)
