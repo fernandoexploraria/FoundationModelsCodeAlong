@@ -2,6 +2,11 @@ import SwiftUI
 import Combine
 import MapKit
 import FoundationModels
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
 private struct PlacePin: Identifiable {
     let id = UUID()
@@ -417,9 +422,9 @@ struct LandmarkInfoView: View {
                 return (a.name ?? "") < (b.name ?? "")
             }
 
-            let topFive = Array(sorted.prefix(5))
-            searchResults = topFive
-            if topFive.isEmpty {
+            let topTwenty = Array(sorted.prefix(20))
+            searchResults = topTwenty
+            if topTwenty.isEmpty {
                 searchMessage = "No results with a verified Apple Place ID. Try a more specific query."
             }
         } catch {
@@ -594,6 +599,18 @@ struct LandmarkInfoView: View {
         }
     }
 
+    private func copyToClipboard(_ text: String) {
+#if os(iOS)
+        UIPasteboard.general.string = text
+#elseif os(macOS)
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+#else
+        _ = text
+#endif
+    }
+
     var body: some View {
         ZStack(alignment: .top) {
             StaticItineraryHeader9999()
@@ -623,58 +640,63 @@ struct LandmarkInfoView: View {
                     } else if !searchResults.isEmpty {
                         VStack(alignment: .leading, spacing: 0) {
                             Text("Select a Place").bold().padding(.bottom, 6)
-                            ForEach(Array(searchResults.enumerated()), id: \.offset) { _, item in
-                                Button {
-                                    select(item)
-                                } label: {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(item.name ?? "Unknown place")
-                                            .font(.body)
-                                        let parts = subtitleParts(for: item)
-                                        if let sym = parts.symbolName, (parts.city?.isEmpty == false || parts.regionID?.isEmpty == false) {
-                                            HStack(spacing: 6) {
-                                                Image(systemName: sym)
-                                                    .font(.footnote)
-                                                    .foregroundStyle(.secondary)
-                                                if let city = parts.city, !city.isEmpty {
-                                                    Text(city)
+                            ScrollView {
+                                LazyVStack(alignment: .leading, spacing: 0) {
+                                    ForEach(Array(searchResults.enumerated()), id: \.offset) { _, item in
+                                        Button {
+                                            select(item)
+                                        } label: {
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(item.name ?? "Unknown place")
+                                                    .font(.body)
+                                                let parts = subtitleParts(for: item)
+                                                if let sym = parts.symbolName, (parts.city?.isEmpty == false || parts.regionID?.isEmpty == false) {
+                                                    HStack(spacing: 6) {
+                                                        Image(systemName: sym)
+                                                            .font(.footnote)
+                                                            .foregroundStyle(.secondary)
+                                                        if let city = parts.city, !city.isEmpty {
+                                                            Text(city)
+                                                                .font(.footnote)
+                                                                .foregroundStyle(.secondary)
+                                                        }
+                                                        if let rid = parts.regionID, !rid.isEmpty {
+                                                            Text("**\\(rid)**")
+                                                                .font(.footnote)
+                                                                .foregroundStyle(.secondary)
+                                                        }
+                                                    }
+                                                } else if (parts.city?.isEmpty == false) || (parts.regionID?.isEmpty == false) {
+                                                    HStack(spacing: 6) {
+                                                        if let city = parts.city, !city.isEmpty {
+                                                            Text(city)
+                                                                .font(.footnote)
+                                                                .foregroundStyle(.secondary)
+                                                        }
+                                                        if let rid = parts.regionID, !rid.isEmpty {
+                                                            Text("**\\(rid)**")
+                                                                .font(.footnote)
+                                                                .foregroundStyle(.secondary)
+                                                        }
+                                                    }
+                                                } else if let sym = parts.symbolName {
+                                                    Image(systemName: sym)
                                                         .font(.footnote)
                                                         .foregroundStyle(.secondary)
-                                                }
-                                                if let rid = parts.regionID, !rid.isEmpty {
-                                                    Text("**\(rid)**")
+                                                } else {
+                                                    Text(subtitle(for: item))
                                                         .font(.footnote)
                                                         .foregroundStyle(.secondary)
                                                 }
                                             }
-                                        } else if (parts.city?.isEmpty == false) || (parts.regionID?.isEmpty == false) {
-                                            HStack(spacing: 6) {
-                                                if let city = parts.city, !city.isEmpty {
-                                                    Text(city)
-                                                        .font(.footnote)
-                                                        .foregroundStyle(.secondary)
-                                                }
-                                                if let rid = parts.regionID, !rid.isEmpty {
-                                                    Text("**\(rid)**")
-                                                        .font(.footnote)
-                                                        .foregroundStyle(.secondary)
-                                                }
-                                            }
-                                        } else if let sym = parts.symbolName {
-                                            Image(systemName: sym)
-                                                .font(.footnote)
-                                                .foregroundStyle(.secondary)
-                                        } else {
-                                            Text(subtitle(for: item))
-                                                .font(.footnote)
-                                                .foregroundStyle(.secondary)
+                                            .padding(.vertical, 8)
                                         }
+                                        .buttonStyle(.plain)
+                                        Divider()
                                     }
-                                    .padding(.vertical, 8)
                                 }
-                                .buttonStyle(.plain)
-                                Divider()
                             }
+                            .frame(height: 180)
                         }
                         .padding(12)
                         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
@@ -685,9 +707,19 @@ struct LandmarkInfoView: View {
                             .padding(.vertical, 4)
                     }
                     
+#if DEBUG
                     // Show the JSON we are producing
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Generated JSON").bold()
+                        HStack {
+                            Text("Generated JSON").bold()
+                            Spacer()
+                            Button {
+                                copyToClipboard(model.currentJSON)
+                            } label: {
+                                Label("Copy", systemImage: "doc.on.doc")
+                            }
+                            .buttonStyle(.bordered)
+                        }
                         ScrollView {
                             Text(model.currentJSON)
                                 .font(.system(.footnote, design: .monospaced))
@@ -699,7 +731,9 @@ struct LandmarkInfoView: View {
                     }
                     .padding(12)
                     .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
-                    
+#endif
+
+#if DEBUG
                     // Parsed Landmark preview from the JSON above
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Landmark Preview").bold()
@@ -722,6 +756,7 @@ struct LandmarkInfoView: View {
                     }
                     .padding(12)
                     .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+#endif
 
                     if model.latitude != 0 || model.longitude != 0 {
                         MapPreviewView(
