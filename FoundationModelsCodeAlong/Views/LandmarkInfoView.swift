@@ -47,7 +47,7 @@ final class LandmarkInfoViewModel: ObservableObject {
         let spanStr = String(format: "%.3f", locale: Locale(identifier: "en_US_POSIX"), span)
         return """
         {
-        \"name\": \"\(escapedName)\",\n        \"continent\": \"\",\n        \"id\": \(generatedID),\n        \"placeID\": \"\(escapedPlaceID)\",\n        \"longitude\": \(lon),\n        \"latitude\": \(lat),\n        \"span\": \(spanStr),\n        \"description\": \"\(escapedDesc)\",\n        \"shortDescription\": \"\(escapedShort)\"\n        }
+        \"name\": \"\(escapedName)\",\n        \"continent\": \"\(Self.escapeJSONString(continent ?? ""))\",\n        \"id\": \(generatedID),\n        \"placeID\": \"\(escapedPlaceID)\",\n        \"longitude\": \(lon),\n        \"latitude\": \(lat),\n        \"span\": \(spanStr),\n        \"description\": \"\(escapedDesc)\",\n        \"shortDescription\": \"\(escapedShort)\"\n        }
         """
     }
 
@@ -434,6 +434,7 @@ struct LandmarkInfoView: View {
         model.generatedPlaceID = item.identifier?.rawValue
         model.city = item.addressRepresentations?.cityWithContext
         model.region = item.addressRepresentations?.region
+        model.continent = ContinentLookup.continentName(for: model.region)
         model.category = item.pointOfInterestCategory
         
         let baseName = item.name ?? queryText
@@ -782,3 +783,4 @@ struct LandmarkInfoView: View {
         LandmarkInfoView()
     }
 }
+
