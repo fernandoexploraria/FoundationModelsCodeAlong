@@ -310,12 +310,11 @@ struct LandmarkInfoView: View {
 
     @State private var cameraPosition: MapCameraPosition = .region(MKCoordinateRegion(center: CLLocationCoordinate2D(latitude: 0, longitude: 0), span: .init(latitudeDelta: 2, longitudeDelta: 2)))
 
-    // Removed the following line as per instructions:
-    // @State private var biasRegion: MKCoordinateRegion? = nil
-    
     @State private var searchResults: [MKMapItem] = []
     @State private var isSearching = false
     @State private var searchMessage: String? = nil
+    
+    @State private var hasSelectedPlace = false
 
     private func updateRegion() {
         let coord = CLLocationCoordinate2D(latitude: model.latitude, longitude: model.longitude)
@@ -324,15 +323,13 @@ struct LandmarkInfoView: View {
         let spanDeg = model.category?.suggestedSpanDegrees ?? 0.10
         let mapRegion = MKCoordinateRegion(center: coord, span: .init(latitudeDelta: spanDeg, longitudeDelta: spanDeg))
         cameraPosition = .region(mapRegion)
-        // Removed these lines as per instructions:
-        // // Bias region (city scale)
-        // let citySpan = MKCoordinateSpan(latitudeDelta: 0.6, longitudeDelta: 0.6)
-        // let newBias = MKCoordinateRegion(center: coord, span: citySpan)
-        // biasRegion = newBias
     }
 
     @MainActor
     private func performSearch() async {
+        withAnimation { hasSelectedPlace = false }
+        descriptionGenerator = nil
+        isGeneratingDescription = false
         let q = queryText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else {
             searchResults = []
@@ -462,6 +459,8 @@ struct LandmarkInfoView: View {
         // Clear the results list and message
         searchResults = []
         searchMessage = nil
+        
+        withAnimation { hasSelectedPlace = true }
 
         // Update the map region and bias
         updateRegion()
@@ -568,11 +567,11 @@ struct LandmarkInfoView: View {
         cameraPosition = .region(MKCoordinateRegion(center: CLLocationCoordinate2D(latitude: 0, longitude: 0), span: .init(latitudeDelta: 2, longitudeDelta: 2)))
         
         // Reset UI measurements and search state
-        // Removed the following line as per instructions:
-        // biasRegion = nil
         searchResults = []
         isSearching = false
         searchMessage = nil
+        
+        hasSelectedPlace = false
     }
     
     private func landmarkFromCurrentJSON() -> Landmark? {
@@ -661,7 +660,7 @@ struct LandmarkInfoView: View {
                                                                 .foregroundStyle(.secondary)
                                                         }
                                                         if let rid = parts.regionID, !rid.isEmpty {
-                                                            Text("**\\(rid)**")
+                                                            Text("**\(rid)**")
                                                                 .font(.footnote)
                                                                 .foregroundStyle(.secondary)
                                                         }
@@ -674,7 +673,7 @@ struct LandmarkInfoView: View {
                                                                 .foregroundStyle(.secondary)
                                                         }
                                                         if let rid = parts.regionID, !rid.isEmpty {
-                                                            Text("**\\(rid)**")
+                                                            Text("**\(rid)**")
                                                                 .font(.footnote)
                                                                 .foregroundStyle(.secondary)
                                                         }
@@ -696,7 +695,7 @@ struct LandmarkInfoView: View {
                                     }
                                 }
                             }
-                            .frame(height: 180)
+                            .frame(height: CGFloat(min(searchResults.count, 5)) * 64)
                         }
                         .padding(12)
                         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
@@ -706,7 +705,31 @@ struct LandmarkInfoView: View {
                             .foregroundStyle(.secondary)
                             .padding(.vertical, 4)
                     }
-                    
+
+                    Group {
+                        if hasSelectedPlace {
+                            if model.latitude != 0 || model.longitude != 0 {
+                                MapPreviewView(
+                                    name: model.name,
+                                    latitude: model.latitude,
+                                    longitude: model.longitude,
+                                    symbolName: model.category?.symbolName,
+                                    cameraPosition: $cameraPosition
+                                )
+                            }
+
+                            DescriptionSectionView(generator: descriptionGenerator, isGenerating: isGeneratingDescription)
+                        }
+
+                        Button("Explore") {
+                            if let lm = landmarkFromCurrentJSON() {
+                                pendingLandmark = lm
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!hasSelectedPlace || model.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.generatedDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+
 #if DEBUG
                     // Show the JSON we are producing
                     VStack(alignment: .leading, spacing: 8) {
@@ -758,26 +781,6 @@ struct LandmarkInfoView: View {
                     .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
 #endif
 
-                    if model.latitude != 0 || model.longitude != 0 {
-                        MapPreviewView(
-                            name: model.name,
-                            latitude: model.latitude,
-                            longitude: model.longitude,
-                            symbolName: model.category?.symbolName,
-                            cameraPosition: $cameraPosition
-                        )
-                    }
-
-                    DescriptionSectionView(generator: descriptionGenerator, isGenerating: isGeneratingDescription)
-
-                    Button("Explore") {
-                        if let lm = landmarkFromCurrentJSON() {
-                            pendingLandmark = lm
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(model.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.generatedDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
                 }
                 .padding(.horizontal)
                 .padding(.top, 120)
@@ -818,4 +821,3 @@ struct LandmarkInfoView: View {
         LandmarkInfoView()
     }
 }
-
