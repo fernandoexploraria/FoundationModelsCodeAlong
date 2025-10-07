@@ -292,6 +292,87 @@ extension MKPointOfInterestCategory {
     }
 }
 
+private enum POIFilter: Hashable, Identifiable {
+    case all
+    case category(MKPointOfInterestCategory)
+    case uncategorized
+
+    var id: String {
+        switch self {
+        case .all: return "all"
+        case .uncategorized: return "uncategorized"
+        case .category(let c): return c.rawValue
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .all: return "All"
+        case .uncategorized: return "Uncategorized"
+        case .category(let c): return c.displayName
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .all:
+            return "square.grid.2x2"
+        case .uncategorized:
+            return "mappin"
+        case .category(let c):
+            return c.symbolName
+        }
+    }
+}
+
+private struct FilterToken: View {
+    let filter: POIFilter
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: filter.symbolName)
+                    .imageScale(.medium)
+                Text(filter.title)
+                    .font(.subheadline)
+                    .lineLimit(1)
+            }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 12)
+            .foregroundStyle(isSelected ? Color.white : Color.primary.opacity(0.8))
+            .background(
+                Group {
+                    if isSelected {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Color.accentColor)
+                    } else {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(.thinMaterial)
+                    }
+                }
+            )
+        }
+        .buttonStyle(.plain)
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .animation(.snappy(duration: 0.15), value: isSelected)
+        .accessibilityLabel("Filter by \(filter.title)")
+    }
+}
+
+private struct OrderedSet<Element: Hashable> {
+    private var array: [Element] = []
+    private var set: Set<Element> = []
+    var isEmpty: Bool { array.isEmpty }
+    mutating func insert(_ element: Element) {
+        if set.insert(element).inserted {
+            array.append(element)
+        }
+    }
+    func contains(_ element: Element) -> Bool { set.contains(element) }
+}
+
 struct LandmarkInfoView: View {
     @StateObject private var model = LandmarkInfoViewModel()
     @State private var queryText: String = ""
@@ -313,6 +394,10 @@ struct LandmarkInfoView: View {
     @State private var searchResults: [MKMapItem] = []
     @State private var isSearching = false
     @State private var searchMessage: String? = nil
+    
+    // Filter state
+    @State private var selectedFilter: POIFilter = .all
+    @State private var availableFilters: [POIFilter] = [.all]
     
     @State private var hasSelectedPlace = false
 
@@ -421,6 +506,9 @@ struct LandmarkInfoView: View {
 
             let topTwenty = Array(sorted.prefix(20))
             searchResults = topTwenty
+            rebuildAvailableFilters()
+            // Reset selection to All on new result set
+            selectedFilter = .all
             if topTwenty.isEmpty {
                 searchMessage = "No results with a verified Apple Place ID. Try a more specific query."
             }
@@ -493,6 +581,73 @@ struct LandmarkInfoView: View {
         }
         // Use a single space between Category and City
         return parts.joined(separator: " ")
+    }
+    
+    private func rebuildAvailableFilters() {
+        // Build a set of categories present in current searchResults
+        var set = OrderedSet<String>()
+        var categories: [MKPointOfInterestCategory] = []
+        var hasUncategorized = false
+        for item in searchResults {
+            if let cat = item.pointOfInterestCategory {
+                // Avoid duplicates using rawValue as key
+                if !set.contains(cat.rawValue) {
+                    set.insert(cat.rawValue)
+                    categories.append(cat)
+                }
+            } else {
+                hasUncategorized = true
+            }
+        }
+        // Sort categories by the same priority used in search, then by name
+        func priority(_ c: MKPointOfInterestCategory) -> Int {
+            switch c {
+            case .landmark: return 0
+            case .museum: return 1
+            case .nationalPark: return 2
+            case .park: return 3
+            case .beach: return 4
+            case .aquarium: return 5
+            case .amusementPark: return 6
+            case .stadium: return 7
+            case .theater: return 8
+            case .movieTheater: return 9
+            case .marina: return 10
+            case .winery: return 11
+            case .brewery: return 12
+            case .library: return 13
+            case .university: return 14
+            case .campground: return 15
+            case .nightlife: return 16
+            default: return 50
+            }
+        }
+        categories.sort { lhs, rhs in
+            let p0 = priority(lhs)
+            let p1 = priority(rhs)
+            if p0 != p1 { return p0 < p1 }
+            return lhs.displayName < rhs.displayName
+        }
+        var filters: [POIFilter] = [.all]
+        filters.append(contentsOf: categories.map { .category($0) })
+        if hasUncategorized { filters.append(.uncategorized) }
+        availableFilters = filters
+
+        // If current selection disappeared, fallback to .all
+        if !availableFilters.contains(selectedFilter) {
+            selectedFilter = .all
+        }
+    }
+    
+    private func filteredResults() -> [MKMapItem] {
+        switch selectedFilter {
+        case .all:
+            return searchResults
+        case .uncategorized:
+            return searchResults.filter { $0.pointOfInterestCategory == nil }
+        case .category(let c):
+            return searchResults.filter { $0.pointOfInterestCategory == c }
+        }
     }
 
     @MainActor
@@ -632,6 +787,9 @@ struct LandmarkInfoView: View {
                     }
                     .onChange(of: model.latitude) { updateRegion() }
                     .onChange(of: model.longitude) { updateRegion() }
+                    .onChange(of: searchResults) { _, _ in
+                        rebuildAvailableFilters()
+                    }
 
                     if isSearching {
                         ProgressView("Searching…")
@@ -639,9 +797,22 @@ struct LandmarkInfoView: View {
                     } else if !searchResults.isEmpty {
                         VStack(alignment: .leading, spacing: 0) {
                             Text("Select a Place").bold().padding(.bottom, 6)
+                            if availableFilters.count > 1 {
+                                ScrollView(.horizontal, showsIndicators: false) {
+                                    HStack(spacing: 8) {
+                                        ForEach(availableFilters) { filter in
+                                            FilterToken(filter: filter, isSelected: filter == selectedFilter) {
+                                                withAnimation(.snappy) { selectedFilter = filter }
+                                            }
+                                        }
+                                    }
+                                    .padding(.vertical, 4)
+                                }
+                                .padding(.bottom, 6)
+                            }
                             ScrollView {
                                 LazyVStack(alignment: .leading, spacing: 0) {
-                                    ForEach(Array(searchResults.enumerated()), id: \.offset) { _, item in
+                                    ForEach(Array(filteredResults().enumerated()), id: \.offset) { _, item in
                                         Button {
                                             select(item)
                                         } label: {
@@ -695,7 +866,7 @@ struct LandmarkInfoView: View {
                                     }
                                 }
                             }
-                            .frame(height: CGFloat(min(searchResults.count, 5)) * 64)
+                            .frame(height: CGFloat(min(filteredResults().count, 5)) * 64)
                         }
                         .padding(12)
                         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
