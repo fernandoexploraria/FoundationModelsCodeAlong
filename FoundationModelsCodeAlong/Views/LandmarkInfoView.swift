@@ -152,6 +152,51 @@ private struct MapPreviewView: View {
     }
 }
 
+private struct PlaceMapView: View {
+    var placeID: String
+    var spanDegrees: Double = 0.10
+
+    @State private var item: MKMapItem?
+    @State private var selection: MKMapItem?
+    @State private var position: MapCameraPosition = .automatic
+    @State private var didSetInitialCamera = false
+
+    var body: some View {
+        Map(position: $position, selection: $selection) {
+            if let item {
+                Marker(item: item)
+                    .tag(item)
+                    .mapItemDetailSelectionAccessory(.sheet)
+            }
+        }
+        .frame(height: 220)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .padding(.bottom, 8)
+        .task {
+            guard let identifier = MKMapItem.Identifier(rawValue: placeID) else { return }
+            let request = MKMapItemRequest(mapItemIdentifier: identifier)
+            item = try? await request.mapItem
+            await setInitialCameraIfNeeded()
+        }
+        .onChange(of: item) { _, _ in
+            Task { await setInitialCameraIfNeeded() }
+        }
+    }
+
+    @MainActor
+    private func setInitialCameraIfNeeded() async {
+        guard !didSetInitialCamera, let coord = item?.location.coordinate else { return }
+        let region = MKCoordinateRegion(
+            center: coord,
+            span: .init(latitudeDelta: spanDegrees, longitudeDelta: spanDegrees)
+        )
+        withAnimation(.easeInOut(duration: 0.25)) {
+            position = .region(region)
+            didSetInitialCamera = true
+        }
+    }
+}
+
 private struct DescriptionSectionView: View {
     let generator: DescriptionGenerator?
     let isGenerating: Bool
@@ -245,7 +290,7 @@ extension MKPointOfInterestCategory {
     var symbolName: String {
         switch self {
         case .landmark:
-            return "mappin.and.ellipse"
+            return "star.circle.fill"
         case .museum:
             return "building.columns"
         case .nationalPark:
@@ -255,7 +300,7 @@ extension MKPointOfInterestCategory {
                 return "leaf.fill"
             }
         case .park:
-            return "leaf.fill"
+            return "tree.fill"
         case .beach:
             if #available(iOS 17.0, macOS 14.0, tvOS 17.0, watchOS 10.0, *) {
                 return "beach.umbrella.fill"
@@ -889,6 +934,8 @@ struct LandmarkInfoView: View {
                                 )
                             }
 
+                             PlaceMapView(placeID: model.generatedPlaceID!, spanDegrees: model.category?.suggestedSpanDegrees ?? 0.10)
+
                             DescriptionSectionView(generator: descriptionGenerator, isGenerating: isGeneratingDescription)
                         }
 
@@ -992,3 +1039,4 @@ struct LandmarkInfoView: View {
         LandmarkInfoView()
     }
 }
+
