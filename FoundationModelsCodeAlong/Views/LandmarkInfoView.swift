@@ -284,8 +284,9 @@ private struct PlaceMapView: View {
                         guard let sourceItem = item else { return }
                         guard let destPin = lastSystemFeaturePin else { return }
                         // Build destination MKMapItem from the dropped pin coordinate
-                        let destPlacemark = MKPlacemark(coordinate: destPin.coordinate)
-                        let destination = MKMapItem(placemark: destPlacemark)
+                        let coord = destPin.coordinate
+                        let loc = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
+                        let destination = MKMapItem(location: loc, address: nil)
                         destination.name = destPin.name
 
                         let req = MKDirections.Request()
