@@ -169,6 +169,28 @@ private struct PrimaryMarker: MapContent {
     }
 }
 
+// MARK: - Transport mode (UI-friendly wrapper)
+private enum TransportMode: String, CaseIterable, Identifiable {
+    case walking, automobile, cycling, any
+    var id: String { rawValue }
+    var icon: String {
+        switch self {
+        case .walking:    return "figure.walk"
+        case .automobile: return "car.fill"
+        case .cycling:    return "bicycle"
+        case .any:        return "point.topleft.down.curvedto.point.bottomright.up"
+        }
+    }
+    var mkType: MKDirectionsTransportType {
+        switch self {
+        case .walking:    return .walking
+        case .automobile: return .automobile
+        case .cycling:    return .cycling
+        case .any:        return .any
+        }
+    }
+}
+
 private struct PlaceMapView: View {
     var placeID: String
     var spanDegrees: Double = 0.10
@@ -182,7 +204,10 @@ private struct PlaceMapView: View {
     @State private var lastSelectedPinID: UUID? = nil
     @State private var latestPinScaledID: UUID? = nil
     @State private var routePolyline: MKPolyline? = nil
-    @State private var transportType: MKDirectionsTransportType = .walking
+
+    // NEW: mode + dialog flag
+    @State private var mode: TransportMode = .walking
+    @State private var showTransportDialog = false
 
     private var lastSystemFeaturePin: DroppedPin? {
         droppedPins.last(where: { $0.source == .systemFeature })
@@ -195,7 +220,6 @@ private struct PlaceMapView: View {
         let currentScaledID = latestPinScaledID
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 1_200_000_000) // 1.2s
-            // Only reset the scale if we are still highlighting the same pin
             if currentScaledID == latestPinScaledID {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.8, blendDuration: 0.1)) {
                     latestPinScaledID = nil
@@ -219,6 +243,38 @@ private struct PlaceMapView: View {
         }
     }
 
+    // NEW: central routing function (uses selected mode)
+    @MainActor
+    private func makeRoute() async {
+        guard let sourceItem = item,
+              let destPin = lastSystemFeaturePin else { return }
+
+        let coord = destPin.coordinate
+        let loc = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
+        let destination = MKMapItem(location: loc, address: nil)
+        destination.name = destPin.name
+
+        let req = MKDirections.Request()
+        req.source = sourceItem
+        req.destination = destination
+        req.transportType = mode.mkType
+
+        let directions = MKDirections(request: req)
+        do {
+            let response = try await directions.calculate()
+            if let route = response.routes.first {
+                routePolyline = route.polyline
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    position = .rect(route.polyline.boundingMapRect)
+                }
+            } else {
+                routePolyline = nil
+            }
+        } catch {
+            routePolyline = nil
+        }
+    }
+
     var body: some View {
         Map(position: $position, selection: $selection) {
             if let item {
@@ -234,10 +290,8 @@ private struct PlaceMapView: View {
         .mapFeatureSelectionAccessory(.callout)
         .onChange(of: selection) { _, newSelection in
             if let mapItem = newSelection?.value {
-                // Selected our own marker backed by MKMapItem
                 handleNewMapItem(mapItem, source: .ourItem)
             } else if let feature = newSelection?.feature {
-                // Selected a system map feature; request an MKMapItem for it
                 Task {
                     let request = MKMapItemRequest(feature: feature)
                     if let mapItem = try? await request.mapItem {
@@ -247,7 +301,6 @@ private struct PlaceMapView: View {
                     }
                 }
             } else {
-                // Selection cleared; remove our transient pin
                 selectedFeatureCoordinate = nil
             }
         }
@@ -266,41 +319,17 @@ private struct PlaceMapView: View {
             Task { await setInitialCameraIfNeeded() }
         }
         .toolbar {
+            // Route button: now opens a mode chooser
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    Task { @MainActor in
-                        guard let sourceItem = item else { return }
-                        guard let destPin = lastSystemFeaturePin else { return }
-                        // Build destination MKMapItem from the dropped pin coordinate
-                        let coord = destPin.coordinate
-                        let loc = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
-                        let destination = MKMapItem(location: loc, address: nil)
-                        destination.name = destPin.name
-
-                        let req = MKDirections.Request()
-                        req.source = sourceItem
-                        req.destination = destination
-                        req.transportType = transportType
-                        let directions = MKDirections(request: req)
-                        do {
-                            let response = try await directions.calculate()
-                            if let route = response.routes.first {
-                                routePolyline = route.polyline
-                                // Fit camera to the route
-                                withAnimation(.easeInOut(duration: 0.3)) {
-                                    position = .rect(route.polyline.boundingMapRect)
-                                }
-                            }
-                        } catch {
-                            // Silently ignore for now; could surface an alert if desired
-                        }
-                    }
+                    showTransportDialog = true
                 } label: {
                     Label("Route", systemImage: "point.topleft.down.curvedto.point.bottomright.up")
                 }
                 .disabled(!(item != nil && droppedPins.contains(where: { $0.source == .systemFeature })))
                 .accessibilityLabel("Create Route")
             }
+
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     showClearPinsConfirm = true
@@ -310,6 +339,18 @@ private struct PlaceMapView: View {
                 .disabled(droppedPins.isEmpty && selectedFeatureCoordinate == nil)
                 .accessibilityLabel("Clear Pins")
             }
+        }
+        // NEW: transport mode picker dialog
+        .confirmationDialog("Choose transport", isPresented: $showTransportDialog, titleVisibility: .visible) {
+            ForEach(TransportMode.allCases) { choice in
+                Button {
+                    mode = choice
+                    Task { await makeRoute() }
+                } label: {
+                    Label(choice.rawValue.capitalized, systemImage: choice.icon)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
         }
         .confirmationDialog("Clear all dropped pins?", isPresented: $showClearPinsConfirm, titleVisibility: .visible) {
             Button("Clear Pins", role: .destructive) {
@@ -334,7 +375,6 @@ private struct PlaceMapView: View {
         }
     }
 }
-
 private struct DescriptionSectionView: View {
     let generator: DescriptionGenerator?
     let isGenerating: Bool
