@@ -131,6 +131,12 @@ private struct PlaceMapView: View {
     @State private var lastSelectedPinID: UUID? = nil
     @State private var latestPinScaledID: UUID? = nil
 
+    @State private var routePolyline: MKPolyline? = nil
+
+    private var lastSystemFeaturePin: DroppedPin? {
+        droppedPins.last(where: { $0.source == .systemFeature })
+    }
+
     private struct DroppedPin: Identifiable {
         let id: UUID = UUID()
         let coordinate: CLLocationCoordinate2D
@@ -183,6 +189,10 @@ private struct PlaceMapView: View {
                         .animation(.spring(response: 0.35, dampingFraction: 0.7, blendDuration: 0.1), value: lastSelectedPinID)
                 }
             }
+            if let polyline = routePolyline {
+                MapPolyline(polyline)
+                    .stroke(.blue, lineWidth: 4)
+            }
         }
         .mapFeatureSelectionAccessory(.callout)
         .onChange(of: selection) { _, newSelection in
@@ -212,6 +222,7 @@ private struct PlaceMapView: View {
                     }
                     latestPinScaledID = newPin.id
                     resetLatestPinAfterDelay()
+                    routePolyline = nil
                 }
             } else if let feature = newSelection?.feature {
                 // Selected a system map feature; request an MKMapItem for it
@@ -242,6 +253,7 @@ private struct PlaceMapView: View {
                                 }
                                 latestPinScaledID = newPin.id
                                 resetLatestPinAfterDelay()
+                                routePolyline = nil
                             }
                         }
                     }
@@ -258,19 +270,47 @@ private struct PlaceMapView: View {
             guard let identifier = MKMapItem.Identifier(rawValue: placeID) else { return }
             let request = MKMapItemRequest(mapItemIdentifier: identifier)
             item = try? await request.mapItem
+            routePolyline = nil
             await setInitialCameraIfNeeded()
         }
         .onChange(of: item) { _, _ in
+            routePolyline = nil
             Task { await setInitialCameraIfNeeded() }
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    // no-op for now
+                    Task { @MainActor in
+                        guard let sourceItem = item else { return }
+                        guard let destPin = lastSystemFeaturePin else { return }
+                        // Build destination MKMapItem from the dropped pin coordinate
+                        let destPlacemark = MKPlacemark(coordinate: destPin.coordinate)
+                        let destination = MKMapItem(placemark: destPlacemark)
+                        destination.name = destPin.name
+
+                        let req = MKDirections.Request()
+                        req.source = sourceItem
+                        req.destination = destination
+                        req.transportType = .any
+
+                        let directions = MKDirections(request: req)
+                        do {
+                            let response = try await directions.calculate()
+                            if let route = response.routes.first {
+                                routePolyline = route.polyline
+                                // Fit camera to the route
+                                withAnimation(.easeInOut(duration: 0.3)) {
+                                    position = .rect(route.polyline.boundingMapRect)
+                                }
+                            }
+                        } catch {
+                            // Silently ignore for now; could surface an alert if desired
+                        }
+                    }
                 } label: {
                     Label("Route", systemImage: "point.topleft.down.curvedto.point.bottomright.up")
                 }
-                .disabled(!droppedPins.contains(where: { $0.source == .systemFeature }))
+                .disabled(!(item != nil && droppedPins.contains(where: { $0.source == .systemFeature })))
                 .accessibilityLabel("Create Route")
             }
             ToolbarItem(placement: .topBarTrailing) {
@@ -287,6 +327,7 @@ private struct PlaceMapView: View {
             Button("Clear Pins", role: .destructive) {
                 droppedPins.removeAll()
                 selectedFeatureCoordinate = nil
+                routePolyline = nil
             }
             Button("Cancel", role: .cancel) { }
         }
