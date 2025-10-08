@@ -127,6 +127,7 @@ private struct PlaceMapView: View {
     @State private var position: MapCameraPosition = .automatic
     @State private var didSetInitialCamera = false
     @State private var selectedFeatureCoordinate: CLLocationCoordinate2D? = nil
+    @State private var showClearPinsConfirm = false
 
     private struct DroppedPin: Identifiable {
         let id: UUID = UUID()
@@ -237,6 +238,24 @@ private struct PlaceMapView: View {
         }
         .onChange(of: item) { _, _ in
             Task { await setInitialCameraIfNeeded() }
+        }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showClearPinsConfirm = true
+                } label: {
+                    Label("Clear Pins", systemImage: "eraser.fill")
+                }
+                .disabled(droppedPins.isEmpty && selectedFeatureCoordinate == nil)
+                .accessibilityLabel("Clear Pins")
+            }
+        }
+        .confirmationDialog("Clear all dropped pins?", isPresented: $showClearPinsConfirm, titleVisibility: .visible) {
+            Button("Clear Pins", role: .destructive) {
+                droppedPins.removeAll()
+                selectedFeatureCoordinate = nil
+            }
+            Button("Cancel", role: .cancel) { }
         }
     }
 
@@ -989,7 +1008,7 @@ struct LandmarkInfoView: View {
                         .frame(height: 180)
                     }
                     .padding(12)
-                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
 #endif
 
 #if DEBUG
