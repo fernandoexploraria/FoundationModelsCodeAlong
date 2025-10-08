@@ -127,6 +127,15 @@ private struct PlaceMapView: View {
     @State private var position: MapCameraPosition = .automatic
     @State private var didSetInitialCamera = false
     @State private var selectedFeatureCoordinate: CLLocationCoordinate2D? = nil
+    @State private var droppedPins: [CLLocationCoordinate2D] = []
+
+    private let pinDedupThresholdMeters: CLLocationDistance = 20
+
+    private func distanceInMeters(_ a: CLLocationCoordinate2D, _ b: CLLocationCoordinate2D) -> CLLocationDistance {
+        let ca = CLLocation(latitude: a.latitude, longitude: a.longitude)
+        let cb = CLLocation(latitude: b.latitude, longitude: b.longitude)
+        return ca.distance(from: cb)
+    }
 
     var body: some View {
         Map(position: $position, selection: $selection) {
@@ -142,6 +151,13 @@ private struct PlaceMapView: View {
                         .foregroundStyle(.red)
                 }
             }
+            ForEach(Array(droppedPins.enumerated()), id: \.offset) { _, coord in
+                Annotation("", coordinate: coord) {
+                    Image(systemName: "mappin")
+                        .font(.title3)
+                        .foregroundStyle(.red)
+                }
+            }
         }
         .mapFeatureSelectionAccessory(.callout)
         .onChange(of: selection) { _, newSelection in
@@ -149,6 +165,10 @@ private struct PlaceMapView: View {
                 // Selected our own marker backed by MKMapItem
                 // Drop a transient pin at this coordinate as a visual cue
                 selectedFeatureCoordinate = mapItem.location.coordinate
+                let coord = mapItem.location.coordinate
+                if !droppedPins.contains(where: { distanceInMeters($0, coord) <= pinDedupThresholdMeters }) {
+                    droppedPins.append(coord)
+                }
             } else if let feature = newSelection?.feature {
                 // Selected a system map feature; request an MKMapItem for it
                 Task {
@@ -156,6 +176,10 @@ private struct PlaceMapView: View {
                     if let mapItem = try? await request.mapItem {
                         await MainActor.run {
                             selectedFeatureCoordinate = mapItem.location.coordinate
+                            let coord = mapItem.location.coordinate
+                            if !droppedPins.contains(where: { distanceInMeters($0, coord) <= pinDedupThresholdMeters }) {
+                                droppedPins.append(coord)
+                            }
                         }
                     }
                 }
