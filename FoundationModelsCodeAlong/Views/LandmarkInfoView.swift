@@ -8,12 +8,6 @@ import UIKit
 import AppKit
 #endif
 
-private struct PlacePin: Identifiable {
-    let id = UUID()
-    let name: String
-    let coordinate: CLLocationCoordinate2D
-}
-
 // Helper to decode the JSON we show on screen
 private struct GeneratedInfo: Decodable {
     let name: String
@@ -124,34 +118,6 @@ private struct StaticItineraryHeader9999: View {
     }
 }
 
-private struct MapPreviewView: View {
-    var name: String
-    var latitude: Double
-    var longitude: Double
-    var symbolName: String?
-
-    @Binding var cameraPosition: MapCameraPosition
-
-    var body: some View {
-        let coord = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
-        let pins = [PlacePin(name: name.isEmpty ? "Selected Place" : name, coordinate: coord)]
-        Map(position: $cameraPosition) {
-            ForEach(pins) { pin in
-                if let symbolName, !symbolName.isEmpty {
-                    Marker(pin.name.isEmpty ? "Selected Place" : pin.name, systemImage: symbolName, coordinate: pin.coordinate)
-                        .tint(.red)
-                } else {
-                    Marker(pin.name.isEmpty ? "Selected Place" : pin.name, coordinate: pin.coordinate)
-                        .tint(.red)
-                }
-            }
-        }
-        .frame(height: 220)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .padding(.bottom, 8)
-    }
-}
-
 private struct PlaceMapView: View {
     var placeID: String
     var spanDegrees: Double = 0.10
@@ -166,9 +132,10 @@ private struct PlaceMapView: View {
             if let item {
                 Marker(item: item)
                     .tag(item)
-                    .mapItemDetailSelectionAccessory(.sheet)
+                    .mapItemDetailSelectionAccessory(.automatic)
             }
         }
+        .mapFeatureSelectionAccessory(.callout)
         .frame(height: 220)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .padding(.bottom, 8)
@@ -261,6 +228,28 @@ extension MKPointOfInterestCategory {
             var name = raw.hasPrefix(prefix) ? String(raw.dropFirst(prefix.count)) : raw
             name = name.replacingOccurrences(of: "([a-z])([A-Z])", with: "$1 $2", options: .regularExpression)
             return name
+        }
+    }
+    var touristPriority: Int {
+        switch self {
+        case .landmark: return 0
+        case .museum: return 1
+        case .nationalPark: return 2
+        case .park: return 3
+        case .beach: return 4
+        case .aquarium: return 5
+        case .amusementPark: return 6
+        case .stadium: return 7
+        case .theater: return 8
+        case .movieTheater: return 9
+        case .marina: return 10
+        case .winery: return 11
+        case .brewery: return 12
+        case .library: return 13
+        case .university: return 14
+        case .campground: return 15
+        case .nightlife: return 16
+        default: return 50
         }
     }
     var suggestedSpanDegrees: Double {
@@ -434,8 +423,6 @@ struct LandmarkInfoView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dismiss) private var dismiss
 
-    @State private var cameraPosition: MapCameraPosition = .region(MKCoordinateRegion(center: CLLocationCoordinate2D(latitude: 0, longitude: 0), span: .init(latitudeDelta: 2, longitudeDelta: 2)))
-
     @State private var searchResults: [MKMapItem] = []
     @State private var isSearching = false
     @State private var searchMessage: String? = nil
@@ -445,15 +432,8 @@ struct LandmarkInfoView: View {
     @State private var availableFilters: [POIFilter] = [.all]
     
     @State private var hasSelectedPlace = false
-
-    private func updateRegion() {
-        let coord = CLLocationCoordinate2D(latitude: model.latitude, longitude: model.longitude)
-        guard CLLocationCoordinate2DIsValid(coord), coord.latitude != 0 || coord.longitude != 0 else { return }
-        // Map preview region using category-based suggested span (degrees)
-        let spanDeg = model.category?.suggestedSpanDegrees ?? 0.10
-        let mapRegion = MKCoordinateRegion(center: coord, span: .init(latitudeDelta: spanDeg, longitudeDelta: spanDeg))
-        cameraPosition = .region(mapRegion)
-    }
+    
+    @State private var selectedItemForDetails: MKMapItem? = nil
 
     @MainActor
     private func performSearch() async {
@@ -501,32 +481,6 @@ struct LandmarkInfoView: View {
                 return item
             }
             // Sort results by tourist relevance: category priority, then name relevance, then alphabetical
-            func categoryPriority(for cat: MKPointOfInterestCategory?) -> Int {
-                // Physical features (nil category) are ranked beneath POIs
-                guard let c = cat else { return 100 }
-                switch c {
-                case .landmark: return 0
-                case .museum: return 1
-                case .nationalPark: return 2
-                case .park: return 3
-                case .beach: return 4
-                case .aquarium: return 5
-                case .amusementPark: return 6
-                case .stadium: return 7
-                case .theater: return 8
-                case .movieTheater: return 9
-                case .marina: return 10
-                case .winery: return 11
-                case .brewery: return 12
-                case .library: return 13
-                case .university: return 14
-                case .campground: return 15
-                case .nightlife: return 16
-                default:
-                    // Unknown/new POI categories beneath known ones
-                    return 50
-                }
-            }
 
             func nameMatchScore(name: String, query: String) -> Int {
                 let n = name.lowercased()
@@ -538,8 +492,8 @@ struct LandmarkInfoView: View {
             }
 
             let sorted = filtered.sorted { a, b in
-                let p0 = categoryPriority(for: a.pointOfInterestCategory)
-                let p1 = categoryPriority(for: b.pointOfInterestCategory)
+                let p0 = a.pointOfInterestCategory?.touristPriority ?? 100
+                let p1 = b.pointOfInterestCategory?.touristPriority ?? 100
                 if p0 != p1 { return p0 < p1 }
 
                 let s0 = nameMatchScore(name: a.name ?? "", query: q)
@@ -595,9 +549,6 @@ struct LandmarkInfoView: View {
         
         withAnimation { hasSelectedPlace = true }
 
-        // Update the map region and bias
-        updateRegion()
-
         // Keep existing behavior: generate description from the name
         Task {
             if canGenerate {
@@ -645,31 +596,9 @@ struct LandmarkInfoView: View {
             }
         }
         // Sort categories by the same priority used in search, then by name
-        func priority(_ c: MKPointOfInterestCategory) -> Int {
-            switch c {
-            case .landmark: return 0
-            case .museum: return 1
-            case .nationalPark: return 2
-            case .park: return 3
-            case .beach: return 4
-            case .aquarium: return 5
-            case .amusementPark: return 6
-            case .stadium: return 7
-            case .theater: return 8
-            case .movieTheater: return 9
-            case .marina: return 10
-            case .winery: return 11
-            case .brewery: return 12
-            case .library: return 13
-            case .university: return 14
-            case .campground: return 15
-            case .nightlife: return 16
-            default: return 50
-            }
-        }
         categories.sort { lhs, rhs in
-            let p0 = priority(lhs)
-            let p1 = priority(rhs)
+            let p0 = lhs.touristPriority
+            let p1 = rhs.touristPriority
             if p0 != p1 { return p0 < p1 }
             return lhs.displayName < rhs.displayName
         }
@@ -763,9 +692,6 @@ struct LandmarkInfoView: View {
         // Clear navigation state
         pendingLandmark = nil
         
-        // Reset camera
-        cameraPosition = .region(MKCoordinateRegion(center: CLLocationCoordinate2D(latitude: 0, longitude: 0), span: .init(latitudeDelta: 2, longitudeDelta: 2)))
-        
         // Reset UI measurements and search state
         searchResults = []
         isSearching = false
@@ -830,8 +756,6 @@ struct LandmarkInfoView: View {
                         .buttonStyle(.borderedProminent)
                         .disabled(queryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
-                    .onChange(of: model.latitude) { updateRegion() }
-                    .onChange(of: model.longitude) { updateRegion() }
                     .onChange(of: searchResults) { _, _ in
                         rebuildAvailableFilters()
                     }
@@ -861,50 +785,63 @@ struct LandmarkInfoView: View {
                                         Button {
                                             select(item)
                                         } label: {
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                Text(item.name ?? "Unknown place")
-                                                    .font(.body)
-                                                let parts = subtitleParts(for: item)
-                                                if let sym = parts.symbolName, (parts.city?.isEmpty == false || parts.regionID?.isEmpty == false) {
-                                                    HStack(spacing: 6) {
+                                            HStack(alignment: .top) {
+                                                VStack(alignment: .leading, spacing: 2) {
+                                                    Text(item.name ?? "Unknown place")
+                                                        .font(.body)
+                                                    let parts = subtitleParts(for: item)
+                                                    if let sym = parts.symbolName, (parts.city?.isEmpty == false || parts.regionID?.isEmpty == false) {
+                                                        HStack(spacing: 6) {
+                                                            Image(systemName: sym)
+                                                                .font(.footnote)
+                                                                .foregroundStyle(.secondary)
+                                                            if let city = parts.city, !city.isEmpty {
+                                                                Text(city)
+                                                                    .font(.footnote)
+                                                                    .foregroundStyle(.secondary)
+                                                            }
+                                                            if let rid = parts.regionID, !rid.isEmpty {
+                                                                Text("**\(rid)**")
+                                                                    .font(.footnote)
+                                                                    .foregroundStyle(.secondary)
+                                                            }
+                                                        }
+                                                    } else if (parts.city?.isEmpty == false) || (parts.regionID?.isEmpty == false) {
+                                                        HStack(spacing: 6) {
+                                                            if let city = parts.city, !city.isEmpty {
+                                                                Text(city)
+                                                                    .font(.footnote)
+                                                                    .foregroundStyle(.secondary)
+                                                            }
+                                                            if let rid = parts.regionID, !rid.isEmpty {
+                                                                Text("**\(rid)**")
+                                                                    .font(.footnote)
+                                                                    .foregroundStyle(.secondary)
+                                                            }
+                                                        }
+                                                    } else if let sym = parts.symbolName {
                                                         Image(systemName: sym)
                                                             .font(.footnote)
                                                             .foregroundStyle(.secondary)
-                                                        if let city = parts.city, !city.isEmpty {
-                                                            Text(city)
-                                                                .font(.footnote)
-                                                                .foregroundStyle(.secondary)
-                                                        }
-                                                        if let rid = parts.regionID, !rid.isEmpty {
-                                                            Text("**\(rid)**")
-                                                                .font(.footnote)
-                                                                .foregroundStyle(.secondary)
-                                                        }
+                                                    } else {
+                                                        Text(subtitle(for: item))
+                                                            .font(.footnote)
+                                                            .foregroundStyle(.secondary)
                                                     }
-                                                } else if (parts.city?.isEmpty == false) || (parts.regionID?.isEmpty == false) {
-                                                    HStack(spacing: 6) {
-                                                        if let city = parts.city, !city.isEmpty {
-                                                            Text(city)
-                                                                .font(.footnote)
-                                                                .foregroundStyle(.secondary)
-                                                        }
-                                                        if let rid = parts.regionID, !rid.isEmpty {
-                                                            Text("**\(rid)**")
-                                                                .font(.footnote)
-                                                                .foregroundStyle(.secondary)
-                                                        }
-                                                    }
-                                                } else if let sym = parts.symbolName {
-                                                    Image(systemName: sym)
-                                                        .font(.footnote)
-                                                        .foregroundStyle(.secondary)
-                                                } else {
-                                                    Text(subtitle(for: item))
-                                                        .font(.footnote)
-                                                        .foregroundStyle(.secondary)
                                                 }
+                                                Spacer(minLength: 8)
+                                                Button {
+                                                    selectedItemForDetails = item
+                                                } label: {
+                                                    Label("Details", systemImage: "info.circle")
+                                                        .labelStyle(.iconOnly)
+                                                        .imageScale(.medium)
+                                                        .foregroundStyle(.secondary)
+                                                        .padding(6)
+                                                }
+                                                .buttonStyle(.plain)
+                                                .accessibilityLabel("Show details for \(item.name ?? "Unknown place")")
                                             }
-                                            .padding(.vertical, 8)
                                         }
                                         .buttonStyle(.plain)
                                         Divider()
@@ -924,15 +861,6 @@ struct LandmarkInfoView: View {
 
                     Group {
                         if hasSelectedPlace {
-                            if model.latitude != 0 || model.longitude != 0 {
-                                MapPreviewView(
-                                    name: model.name,
-                                    latitude: model.latitude,
-                                    longitude: model.longitude,
-                                    symbolName: model.category?.symbolName,
-                                    cameraPosition: $cameraPosition
-                                )
-                            }
 
                              PlaceMapView(placeID: model.generatedPlaceID!, spanDegrees: model.category?.suggestedSpanDegrees ?? 0.10)
 
@@ -1031,6 +959,7 @@ struct LandmarkInfoView: View {
             LandmarkDetailView(landmark: landmark)
         }
         .navigationBarTitleDisplayMode(.inline)
+        .mapItemDetailSheet(item: $selectedItemForDetails)
     }
 }
 
