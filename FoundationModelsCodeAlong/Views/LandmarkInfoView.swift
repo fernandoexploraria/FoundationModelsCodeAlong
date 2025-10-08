@@ -137,15 +137,6 @@ private struct PlaceMapView: View {
         droppedPins.last(where: { $0.source == .systemFeature })
     }
 
-    private struct DroppedPin: Identifiable {
-        let id: UUID = UUID()
-        let coordinate: CLLocationCoordinate2D
-        let name: String
-        let placeID: String?
-        let category: MKPointOfInterestCategory?
-        let source: Source
-        enum Source: String, Hashable { case ourItem, systemFeature }
-    }
     @State private var droppedPins: [DroppedPin] = []
 
     @MainActor
@@ -160,14 +151,6 @@ private struct PlaceMapView: View {
                 }
             }
         }
-    }
-
-    private let pinDedupThresholdMeters: CLLocationDistance = 20
-
-    private func distanceInMeters(_ a: CLLocationCoordinate2D, _ b: CLLocationCoordinate2D) -> CLLocationDistance {
-        let ca = CLLocation(latitude: a.latitude, longitude: a.longitude)
-        let cb = CLLocation(latitude: b.latitude, longitude: b.longitude)
-        return ca.distance(from: cb)
     }
 
     var body: some View {
@@ -200,21 +183,9 @@ private struct PlaceMapView: View {
                 // Selected our own marker backed by MKMapItem
                 // Drop a transient pin at this coordinate as a visual cue
                 selectedFeatureCoordinate = mapItem.location.coordinate
-                let coord = mapItem.location.coordinate
-                let newPin = DroppedPin(
-                    coordinate: coord,
-                    name: mapItem.name ?? "Selected Place",
-                    placeID: mapItem.identifier?.rawValue,
-                    category: mapItem.pointOfInterestCategory,
-                    source: .ourItem
-                )
-                let isDuplicate: Bool = {
-                    if let pid = newPin.placeID {
-                        return droppedPins.contains(where: { $0.placeID == pid })
-                    } else {
-                        return droppedPins.contains(where: { distanceInMeters($0.coordinate, coord) <= pinDedupThresholdMeters })
-                    }
-                }()
+                let newPin = MapInteractionModel.makeDroppedPin(from: mapItem, source: .ourItem)
+                let coord = newPin.coordinate
+                let isDuplicate: Bool = MapInteractionModel.isDuplicate(newPin, existing: droppedPins)
                 if !isDuplicate {
                     droppedPins.append(newPin)
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.7, blendDuration: 0.1)) {
@@ -231,21 +202,9 @@ private struct PlaceMapView: View {
                     if let mapItem = try? await request.mapItem {
                         await MainActor.run {
                             selectedFeatureCoordinate = mapItem.location.coordinate
-                            let coord = mapItem.location.coordinate
-                            let newPin = DroppedPin(
-                                coordinate: coord,
-                                name: mapItem.name ?? "Selected Place",
-                                placeID: mapItem.identifier?.rawValue,
-                                category: mapItem.pointOfInterestCategory,
-                                source: .systemFeature
-                            )
-                            let isDuplicate: Bool = {
-                                if let pid = newPin.placeID {
-                                    return droppedPins.contains(where: { $0.placeID == pid })
-                                } else {
-                                    return droppedPins.contains(where: { distanceInMeters($0.coordinate, coord) <= pinDedupThresholdMeters })
-                                }
-                            }()
+                            let newPin = MapInteractionModel.makeDroppedPin(from: mapItem, source: .systemFeature)
+                            let coord = newPin.coordinate
+                            let isDuplicate: Bool = MapInteractionModel.isDuplicate(newPin, existing: droppedPins)
                             if !isDuplicate {
                                 droppedPins.append(newPin)
                                 withAnimation(.spring(response: 0.35, dampingFraction: 0.7, blendDuration: 0.1)) {
@@ -382,200 +341,6 @@ private struct DescriptionSectionView: View {
             .frame(height: 220)
             .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
         }
-    }
-}
-
-extension MKPointOfInterestCategory {
-    var displayName: String {
-        switch self {
-        case .museum: return "Museum"
-        case .landmark: return "Landmark"
-        case .park: return "Park"
-        case .nationalPark: return "National Park"
-        case .beach: return "Beach"
-        case .marina: return "Marina"
-        case .aquarium: return "Aquarium"
-        case .amusementPark: return "Amusement Park"
-        case .stadium: return "Stadium"
-        case .theater: return "Theater"
-        case .movieTheater: return "Movie Theater"
-        case .nightlife: return "Nightlife"
-        case .winery: return "Winery"
-        case .brewery: return "Brewery"
-        case .library: return "Library"
-        case .university: return "University"
-        case .campground: return "Campground"
-        default:
-            // Fallback: prettify unknown raw values like "MKPOICategorySomePlace" -> "Some Place"
-            let raw = self.rawValue
-            let prefix = "MKPOICategory"
-            var name = raw.hasPrefix(prefix) ? String(raw.dropFirst(prefix.count)) : raw
-            name = name.replacingOccurrences(of: "([a-z])([A-Z])", with: "$1 $2", options: .regularExpression)
-            return name
-        }
-    }
-    var touristPriority: Int {
-        switch self {
-        case .landmark: return 0
-        case .museum: return 1
-        case .nationalPark: return 2
-        case .park: return 3
-        case .beach: return 4
-        case .aquarium: return 5
-        case .amusementPark: return 6
-        case .stadium: return 7
-        case .theater: return 8
-        case .movieTheater: return 9
-        case .marina: return 10
-        case .winery: return 11
-        case .brewery: return 12
-        case .library: return 13
-        case .university: return 14
-        case .campground: return 15
-        case .nightlife: return 16
-        default: return 50
-        }
-    }
-    var suggestedSpanDegrees: Double {
-        switch self {
-        case .landmark: return 0.03
-        case .museum: return 0.03
-        case .theater: return 0.03
-        case .movieTheater: return 0.03
-        case .library: return 0.03
-        case .aquarium: return 0.04
-        case .brewery: return 0.04
-        case .stadium: return 0.05
-        case .nightlife: return 0.05
-        case .marina: return 0.06
-        case .winery: return 0.06
-        case .park: return 0.10
-        case .amusementPark: return 0.12
-        case .university: return 0.12
-        case .campground: return 0.12
-        case .beach: return 0.15
-        case .nationalPark: return 0.50
-        default:
-            // Unknown/new categories: reasonable middle ground
-            return 0.08
-        }
-    }
-    var symbolName: String {
-        switch self {
-        case .landmark:
-            return "star.circle.fill"
-        case .museum:
-            return "building.columns"
-        case .nationalPark:
-            if #available(iOS 17.0, macOS 14.0, tvOS 17.0, watchOS 10.0, *) {
-                return "mountain.2.fill"
-            } else {
-                return "leaf.fill"
-            }
-        case .park:
-            return "tree.fill"
-        case .beach:
-            if #available(iOS 17.0, macOS 14.0, tvOS 17.0, watchOS 10.0, *) {
-                return "beach.umbrella.fill"
-            } else {
-                return "sun.max"
-            }
-        case .marina:
-            return "sailboat.fill"
-        case .aquarium:
-            return "fish"
-        case .amusementPark:
-            return "sparkles"
-        case .stadium:
-            return "sportscourt.fill"
-        case .theater:
-            return "theatermasks.fill"
-        case .movieTheater:
-            return "film.fill"
-        case .nightlife:
-            return "moon.stars.fill"
-        case .winery:
-            return "wineglass"
-        case .brewery:
-            return "wineglass"
-        case .library:
-            return "books.vertical"
-        case .university:
-            return "graduationcap.fill"
-        case .campground:
-            return "tent.fill"
-        default:
-            return "mappin"
-        }
-    }
-}
-
-private enum POIFilter: Hashable, Identifiable {
-    case all
-    case category(MKPointOfInterestCategory)
-    case uncategorized
-
-    var id: String {
-        switch self {
-        case .all: return "all"
-        case .uncategorized: return "uncategorized"
-        case .category(let c): return c.rawValue
-        }
-    }
-
-    var title: String {
-        switch self {
-        case .all: return "All"
-        case .uncategorized: return "Uncategorized"
-        case .category(let c): return c.displayName
-        }
-    }
-
-    var symbolName: String {
-        switch self {
-        case .all:
-            return "square.grid.2x2"
-        case .uncategorized:
-            return "mappin"
-        case .category(let c):
-            return c.symbolName
-        }
-    }
-}
-
-private struct FilterToken: View {
-    let filter: POIFilter
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: filter.symbolName)
-                    .imageScale(.medium)
-                Text(filter.title)
-                    .font(.subheadline)
-                    .lineLimit(1)
-            }
-            .padding(.vertical, 8)
-            .padding(.horizontal, 12)
-            .foregroundStyle(isSelected ? Color.white : Color.primary.opacity(0.8))
-            .background(
-                Group {
-                    if isSelected {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(Color.accentColor)
-                    } else {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(.thinMaterial)
-                    }
-                }
-            )
-        }
-        .buttonStyle(.plain)
-        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .animation(.snappy(duration: 0.15), value: isSelected)
-        .accessibilityLabel("Filter by \(filter.title)")
     }
 }
 
@@ -1152,4 +917,3 @@ struct LandmarkInfoView: View {
         LandmarkInfoView()
     }
 }
-
