@@ -126,6 +126,7 @@ private struct PlaceMapView: View {
     @State private var selection: MapSelection<MKMapItem>?
     @State private var position: MapCameraPosition = .automatic
     @State private var didSetInitialCamera = false
+    @State private var selectedFeatureCoordinate: CLLocationCoordinate2D? = nil
 
     var body: some View {
         Map(position: $position, selection: $selection) {
@@ -134,19 +135,33 @@ private struct PlaceMapView: View {
                     .tag(MapSelection(item))
                     .mapItemDetailSelectionAccessory(.automatic)
             }
+            if let coord = selectedFeatureCoordinate {
+                Annotation("", coordinate: coord) {
+                    Image(systemName: "mappin")
+                        .font(.title3)
+                        .foregroundStyle(.red)
+                }
+            }
         }
         .mapFeatureSelectionAccessory(.callout)
         .onChange(of: selection) { _, newSelection in
             if let mapItem = newSelection?.value {
                 // Selected our own marker backed by MKMapItem
-                // You can integrate with app state here if needed
-                _ = mapItem
+                // Drop a transient pin at this coordinate as a visual cue
+                selectedFeatureCoordinate = mapItem.location.coordinate
             } else if let feature = newSelection?.feature {
                 // Selected a system map feature; request an MKMapItem for it
                 Task {
                     let request = MKMapItemRequest(feature: feature)
-                    _ = try? await request.mapItem
+                    if let mapItem = try? await request.mapItem {
+                        await MainActor.run {
+                            selectedFeatureCoordinate = mapItem.location.coordinate
+                        }
+                    }
                 }
+            } else {
+                // Selection cleared; remove our transient pin
+                selectedFeatureCoordinate = nil
             }
         }
         .frame(height: 220)
@@ -981,3 +996,4 @@ struct LandmarkInfoView: View {
         LandmarkInfoView()
     }
 }
+
