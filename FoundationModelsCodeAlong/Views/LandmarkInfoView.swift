@@ -127,7 +127,17 @@ private struct PlaceMapView: View {
     @State private var position: MapCameraPosition = .automatic
     @State private var didSetInitialCamera = false
     @State private var selectedFeatureCoordinate: CLLocationCoordinate2D? = nil
-    @State private var droppedPins: [CLLocationCoordinate2D] = []
+
+    private struct DroppedPin: Identifiable {
+        let id: UUID = UUID()
+        let coordinate: CLLocationCoordinate2D
+        let name: String
+        let placeID: String?
+        let category: MKPointOfInterestCategory?
+        let source: Source
+        enum Source: String, Hashable { case ourItem, systemFeature }
+    }
+    @State private var droppedPins: [DroppedPin] = []
 
     private let pinDedupThresholdMeters: CLLocationDistance = 20
 
@@ -151,8 +161,8 @@ private struct PlaceMapView: View {
                         .foregroundStyle(.red)
                 }
             }
-            ForEach(Array(droppedPins.enumerated()), id: \.offset) { _, coord in
-                Annotation("", coordinate: coord) {
+            ForEach(droppedPins) { pin in
+                Annotation(pin.name, coordinate: pin.coordinate) {
                     Image(systemName: "mappin")
                         .font(.title3)
                         .foregroundStyle(.red)
@@ -166,8 +176,22 @@ private struct PlaceMapView: View {
                 // Drop a transient pin at this coordinate as a visual cue
                 selectedFeatureCoordinate = mapItem.location.coordinate
                 let coord = mapItem.location.coordinate
-                if !droppedPins.contains(where: { distanceInMeters($0, coord) <= pinDedupThresholdMeters }) {
-                    droppedPins.append(coord)
+                let newPin = DroppedPin(
+                    coordinate: coord,
+                    name: mapItem.name ?? "Selected Place",
+                    placeID: mapItem.identifier?.rawValue,
+                    category: mapItem.pointOfInterestCategory,
+                    source: .ourItem
+                )
+                let isDuplicate: Bool = {
+                    if let pid = newPin.placeID {
+                        return droppedPins.contains(where: { $0.placeID == pid })
+                    } else {
+                        return droppedPins.contains(where: { distanceInMeters($0.coordinate, coord) <= pinDedupThresholdMeters })
+                    }
+                }()
+                if !isDuplicate {
+                    droppedPins.append(newPin)
                 }
             } else if let feature = newSelection?.feature {
                 // Selected a system map feature; request an MKMapItem for it
@@ -177,8 +201,22 @@ private struct PlaceMapView: View {
                         await MainActor.run {
                             selectedFeatureCoordinate = mapItem.location.coordinate
                             let coord = mapItem.location.coordinate
-                            if !droppedPins.contains(where: { distanceInMeters($0, coord) <= pinDedupThresholdMeters }) {
-                                droppedPins.append(coord)
+                            let newPin = DroppedPin(
+                                coordinate: coord,
+                                name: mapItem.name ?? "Selected Place",
+                                placeID: mapItem.identifier?.rawValue,
+                                category: mapItem.pointOfInterestCategory,
+                                source: .systemFeature
+                            )
+                            let isDuplicate: Bool = {
+                                if let pid = newPin.placeID {
+                                    return droppedPins.contains(where: { $0.placeID == pid })
+                                } else {
+                                    return droppedPins.contains(where: { distanceInMeters($0.coordinate, coord) <= pinDedupThresholdMeters })
+                                }
+                            }()
+                            if !isDuplicate {
+                                droppedPins.append(newPin)
                             }
                         }
                     }
