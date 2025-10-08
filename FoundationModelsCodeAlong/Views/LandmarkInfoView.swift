@@ -118,6 +118,56 @@ private struct StaticItineraryHeader9999: View {
     }
 }
 
+// MARK: - Map Content Helpers (extracted to aid the type-checker)
+
+@MapContentBuilder
+private func RoutePolylineOverlay(_ polyline: MKPolyline?) -> some MapContent {
+    if let polyline {
+        MapPolyline(polyline)
+            .stroke(.blue, lineWidth: 4)
+    }
+}
+
+private struct PinIconView: View {
+    let isHighlighted: Bool
+    let isScaled: Bool
+
+    var body: some View {
+        Image(systemName: "mappin")
+            .font(isScaled ? .title2 : .title3)
+            .foregroundStyle(isHighlighted ? .blue : .red)
+            .scaleEffect(isScaled ? 1.15 : 1.0)
+            .animation(.spring(response: 0.35, dampingFraction: 0.7, blendDuration: 0.1), value: isScaled)
+            .animation(.spring(response: 0.35, dampingFraction: 0.7, blendDuration: 0.1), value: isHighlighted)
+    }
+}
+
+private struct DroppedPinsLayer: MapContent {
+    let pins: [DroppedPin]
+    let lastSelectedPinID: UUID?
+    let latestPinScaledID: UUID?
+
+    var body: some MapContent {
+        ForEach(pins) { pin in
+            let isHighlighted = (pin.id == lastSelectedPinID)
+            let isScaled = (pin.id == latestPinScaledID)
+            Annotation(pin.name, coordinate: pin.coordinate) {
+                PinIconView(isHighlighted: isHighlighted, isScaled: isScaled)
+            }
+        }
+    }
+}
+
+private struct PrimaryMarker: MapContent {
+    let item: MKMapItem
+
+    var body: some MapContent {
+        Marker(item: item)
+            .tag(MapSelection(item))
+            .mapItemDetailSelectionAccessory(.automatic)
+    }
+}
+
 private struct PlaceMapView: View {
     var placeID: String
     var spanDegrees: Double = 0.10
@@ -171,26 +221,14 @@ private struct PlaceMapView: View {
     var body: some View {
         Map(position: $position, selection: $selection) {
             if let item {
-                Marker(item: item)
-                    .tag(MapSelection(item))
-                    .mapItemDetailSelectionAccessory(.automatic)
+                PrimaryMarker(item: item)
             }
-            ForEach(droppedPins) { pin in
-                let isHighlighted = (pin.id == lastSelectedPinID)
-                let isScaled = (pin.id == latestPinScaledID)
-                Annotation(pin.name, coordinate: pin.coordinate) {
-                    Image(systemName: "mappin")
-                        .font(isScaled ? .title2 : .title3)
-                        .foregroundStyle(isHighlighted ? .blue : .red)
-                        .scaleEffect(isScaled ? 1.15 : 1.0)
-                        .animation(.spring(response: 0.35, dampingFraction: 0.7, blendDuration: 0.1), value: latestPinScaledID)
-                        .animation(.spring(response: 0.35, dampingFraction: 0.7, blendDuration: 0.1), value: lastSelectedPinID)
-                }
-            }
-            if let polyline = routePolyline {
-                MapPolyline(polyline)
-                    .stroke(.blue, lineWidth: 4)
-            }
+            DroppedPinsLayer(
+                pins: droppedPins,
+                lastSelectedPinID: lastSelectedPinID,
+                latestPinScaledID: latestPinScaledID
+            )
+            RoutePolylineOverlay(routePolyline)
         }
         .mapFeatureSelectionAccessory(.callout)
         .onChange(of: selection) { _, newSelection in
