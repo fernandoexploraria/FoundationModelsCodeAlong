@@ -153,6 +153,21 @@ private struct PlaceMapView: View {
         }
     }
 
+    private func handleNewMapItem(_ mapItem: MKMapItem, source: DroppedPin.Source) {
+        selectedFeatureCoordinate = mapItem.location.coordinate
+        let newPin = MapInteractionModel.makeDroppedPin(from: mapItem, source: source)
+        let isDuplicate: Bool = MapInteractionModel.isDuplicate(newPin, existing: droppedPins)
+        if !isDuplicate {
+            droppedPins.append(newPin)
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.7, blendDuration: 0.1)) {
+                lastSelectedPinID = newPin.id
+            }
+            latestPinScaledID = newPin.id
+            resetLatestPinAfterDelay()
+            routePolyline = nil
+        }
+    }
+
     var body: some View {
         Map(position: $position, selection: $selection) {
             if let item {
@@ -181,39 +196,14 @@ private struct PlaceMapView: View {
         .onChange(of: selection) { _, newSelection in
             if let mapItem = newSelection?.value {
                 // Selected our own marker backed by MKMapItem
-                // Drop a transient pin at this coordinate as a visual cue
-                selectedFeatureCoordinate = mapItem.location.coordinate
-                let newPin = MapInteractionModel.makeDroppedPin(from: mapItem, source: .ourItem)
-                let coord = newPin.coordinate
-                let isDuplicate: Bool = MapInteractionModel.isDuplicate(newPin, existing: droppedPins)
-                if !isDuplicate {
-                    droppedPins.append(newPin)
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.7, blendDuration: 0.1)) {
-                        lastSelectedPinID = newPin.id
-                    }
-                    latestPinScaledID = newPin.id
-                    resetLatestPinAfterDelay()
-                    routePolyline = nil
-                }
+                handleNewMapItem(mapItem, source: .ourItem)
             } else if let feature = newSelection?.feature {
                 // Selected a system map feature; request an MKMapItem for it
                 Task {
                     let request = MKMapItemRequest(feature: feature)
                     if let mapItem = try? await request.mapItem {
                         await MainActor.run {
-                            selectedFeatureCoordinate = mapItem.location.coordinate
-                            let newPin = MapInteractionModel.makeDroppedPin(from: mapItem, source: .systemFeature)
-                            let coord = newPin.coordinate
-                            let isDuplicate: Bool = MapInteractionModel.isDuplicate(newPin, existing: droppedPins)
-                            if !isDuplicate {
-                                droppedPins.append(newPin)
-                                withAnimation(.spring(response: 0.35, dampingFraction: 0.7, blendDuration: 0.1)) {
-                                    lastSelectedPinID = newPin.id
-                                }
-                                latestPinScaledID = newPin.id
-                                resetLatestPinAfterDelay()
-                                routePolyline = nil
-                            }
+                            handleNewMapItem(mapItem, source: .systemFeature)
                         }
                     }
                 }
@@ -810,8 +800,9 @@ struct LandmarkInfoView: View {
 
                     Group {
                         if hasSelectedPlace {
-
-                             PlaceMapView(placeID: model.generatedPlaceID!, spanDegrees: model.category?.suggestedSpanDegrees ?? 0.10)
+                            if let pid = model.generatedPlaceID {
+                                PlaceMapView(placeID: pid, spanDegrees: model.category?.suggestedSpanDegrees ?? 0.10)
+                            }
 
                             DescriptionSectionView(generator: descriptionGenerator, isGenerating: isGeneratingDescription)
                         }
