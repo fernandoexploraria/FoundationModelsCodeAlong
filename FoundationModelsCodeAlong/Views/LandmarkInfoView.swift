@@ -266,6 +266,15 @@ private struct PlaceMapView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
+                    // no-op for now
+                } label: {
+                    Label("Route", systemImage: "point.topleft.down.curvedto.point.bottomright.up")
+                }
+                .disabled(!droppedPins.contains(where: { $0.source == .systemFeature }))
+                .accessibilityLabel("Create Route")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
                     showClearPinsConfirm = true
                 } label: {
                     Label("Clear Pins", systemImage: "eraser.fill")
