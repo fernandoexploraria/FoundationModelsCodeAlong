@@ -128,6 +128,8 @@ private struct PlaceMapView: View {
     @State private var didSetInitialCamera = false
     @State private var selectedFeatureCoordinate: CLLocationCoordinate2D? = nil
     @State private var showClearPinsConfirm = false
+    @State private var lastSelectedPinID: UUID? = nil
+    @State private var latestPinScaledID: UUID? = nil
 
     private struct DroppedPin: Identifiable {
         let id: UUID = UUID()
@@ -139,6 +141,20 @@ private struct PlaceMapView: View {
         enum Source: String, Hashable { case ourItem, systemFeature }
     }
     @State private var droppedPins: [DroppedPin] = []
+
+    @MainActor
+    private func resetLatestPinAfterDelay() {
+        let currentScaledID = latestPinScaledID
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_200_000_000) // 1.2s
+            // Only reset the scale if we are still highlighting the same pin
+            if currentScaledID == latestPinScaledID {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8, blendDuration: 0.1)) {
+                    latestPinScaledID = nil
+                }
+            }
+        }
+    }
 
     private let pinDedupThresholdMeters: CLLocationDistance = 20
 
@@ -155,18 +171,16 @@ private struct PlaceMapView: View {
                     .tag(MapSelection(item))
                     .mapItemDetailSelectionAccessory(.automatic)
             }
-            if let coord = selectedFeatureCoordinate {
-                Annotation("", coordinate: coord) {
-                    Image(systemName: "mappin")
-                        .font(.title3)
-                        .foregroundStyle(.red)
-                }
-            }
             ForEach(droppedPins) { pin in
+                let isHighlighted = (pin.id == lastSelectedPinID)
+                let isScaled = (pin.id == latestPinScaledID)
                 Annotation(pin.name, coordinate: pin.coordinate) {
                     Image(systemName: "mappin")
-                        .font(.title3)
-                        .foregroundStyle(.red)
+                        .font(isScaled ? .title2 : .title3)
+                        .foregroundStyle(isHighlighted ? .blue : .red)
+                        .scaleEffect(isScaled ? 1.15 : 1.0)
+                        .animation(.spring(response: 0.35, dampingFraction: 0.7, blendDuration: 0.1), value: latestPinScaledID)
+                        .animation(.spring(response: 0.35, dampingFraction: 0.7, blendDuration: 0.1), value: lastSelectedPinID)
                 }
             }
         }
@@ -193,6 +207,11 @@ private struct PlaceMapView: View {
                 }()
                 if !isDuplicate {
                     droppedPins.append(newPin)
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.7, blendDuration: 0.1)) {
+                        lastSelectedPinID = newPin.id
+                    }
+                    latestPinScaledID = newPin.id
+                    resetLatestPinAfterDelay()
                 }
             } else if let feature = newSelection?.feature {
                 // Selected a system map feature; request an MKMapItem for it
@@ -218,6 +237,11 @@ private struct PlaceMapView: View {
                             }()
                             if !isDuplicate {
                                 droppedPins.append(newPin)
+                                withAnimation(.spring(response: 0.35, dampingFraction: 0.7, blendDuration: 0.1)) {
+                                    lastSelectedPinID = newPin.id
+                                }
+                                latestPinScaledID = newPin.id
+                                resetLatestPinAfterDelay()
                             }
                         }
                     }
