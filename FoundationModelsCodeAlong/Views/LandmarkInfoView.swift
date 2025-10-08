@@ -35,6 +35,7 @@ final class LandmarkInfoViewModel: ObservableObject {
     @Published var continent: String? = nil
     @Published var category: MKPointOfInterestCategory? = nil
 
+
     var currentJSON: String {
         let escapedName = Self.escapeJSONString(name)
         let lat = String(format: "%.5f", locale: Locale(identifier: "en_US_POSIX"), latitude)
@@ -180,8 +181,8 @@ private struct PlaceMapView: View {
     @State private var showClearPinsConfirm = false
     @State private var lastSelectedPinID: UUID? = nil
     @State private var latestPinScaledID: UUID? = nil
-
     @State private var routePolyline: MKPolyline? = nil
+    @State private var transportType: MKDirectionsTransportType = .walking
 
     private var lastSystemFeaturePin: DroppedPin? {
         droppedPins.last(where: { $0.source == .systemFeature })
@@ -279,8 +280,7 @@ private struct PlaceMapView: View {
                         let req = MKDirections.Request()
                         req.source = sourceItem
                         req.destination = destination
-                        req.transportType = .any
-
+                        req.transportType = transportType
                         let directions = MKDirections(request: req)
                         do {
                             let response = try await directions.calculate()
