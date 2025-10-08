@@ -123,7 +123,7 @@ private struct PlaceMapView: View {
     var spanDegrees: Double = 0.10
 
     @State private var item: MKMapItem?
-    @State private var selection: MKMapItem?
+    @State private var selection: MapSelection<MKMapItem>?
     @State private var position: MapCameraPosition = .automatic
     @State private var didSetInitialCamera = false
 
@@ -131,11 +131,24 @@ private struct PlaceMapView: View {
         Map(position: $position, selection: $selection) {
             if let item {
                 Marker(item: item)
-                    .tag(item)
+                    .tag(MapSelection(item))
                     .mapItemDetailSelectionAccessory(.automatic)
             }
         }
         .mapFeatureSelectionAccessory(.callout)
+        .onChange(of: selection) { _, newSelection in
+            if let mapItem = newSelection?.value {
+                // Selected our own marker backed by MKMapItem
+                // You can integrate with app state here if needed
+                _ = mapItem
+            } else if let feature = newSelection?.feature {
+                // Selected a system map feature; request an MKMapItem for it
+                Task {
+                    let request = MKMapItemRequest(feature: feature)
+                    _ = try? await request.mapItem
+                }
+            }
+        }
         .frame(height: 220)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .padding(.bottom, 8)
@@ -968,4 +981,3 @@ struct LandmarkInfoView: View {
         LandmarkInfoView()
     }
 }
-
