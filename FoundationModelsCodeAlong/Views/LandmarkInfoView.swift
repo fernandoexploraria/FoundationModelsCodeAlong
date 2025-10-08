@@ -304,7 +304,7 @@ private struct PlaceMapView: View {
                 selectedFeatureCoordinate = nil
             }
         }
-        .frame(height: 220)
+        .frame(height: 260)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .padding(.bottom, 8)
         .task {
