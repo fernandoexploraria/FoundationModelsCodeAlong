@@ -852,7 +852,7 @@ struct LandmarkInfoView: View {
                 VStack {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text("Landmark Info Lookup")
-                            .font(.title2).bold()
+                            .font(.title).bold()
                         if canGenerate && didPrewarm {
                             Image(systemName: "sparkles")
                                 .font(.title3)
