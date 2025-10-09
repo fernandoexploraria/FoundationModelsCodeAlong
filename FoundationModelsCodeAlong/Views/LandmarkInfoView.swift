@@ -1064,6 +1064,19 @@ struct LandmarkInfoView: View {
                     .accessibilityHidden(true)
             }
         }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    if let lm = landmarkFromCurrentJSON() {
+                        pendingLandmark = lm
+                    }
+                } label: {
+                    Label("Itinerary", systemImage: "list.bullet.clipboard")
+                }
+                .disabled(!hasSelectedPlace || model.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.generatedDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityLabel("Open Itinerary")
+            }
+        }
         .toolbarBackground(.hidden, for: ToolbarPlacement.navigationBar)
         .navigationDestination(item: $pendingLandmark) { landmark in
             LandmarkDetailView(landmark: landmark)
@@ -1078,3 +1091,4 @@ struct LandmarkInfoView: View {
         LandmarkInfoView()
     }
 }
+
