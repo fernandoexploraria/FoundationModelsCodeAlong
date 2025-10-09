@@ -976,14 +976,6 @@ struct LandmarkInfoView: View {
 
                             DescriptionSectionView(generator: descriptionGenerator, isGenerating: isGeneratingDescription)
                         }
-
-                        Button("Explore") {
-                            if let lm = landmarkFromCurrentJSON() {
-                                pendingLandmark = lm
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(!hasSelectedPlace || model.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.generatedDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
 
 #if DEBUG
@@ -1091,4 +1083,3 @@ struct LandmarkInfoView: View {
         LandmarkInfoView()
     }
 }
-
