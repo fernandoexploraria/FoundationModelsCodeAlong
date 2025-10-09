@@ -606,6 +606,17 @@ private struct OrderedSet<Element: Hashable> {
     func contains(_ element: Element) -> Bool { set.contains(element) }
 }
 
+// Shared curated list of tourist-relevant POI categories used by completer and full search
+private let touristPOICategories: [MKPointOfInterestCategory] = [
+    .museum, .landmark, .park, .nationalPark, .beach, .marina, .aquarium,
+    .amusementPark, .stadium, .theater, .movieTheater, .nightlife, .winery,
+    .brewery, .library, .university, .campground
+]
+
+private func currentPOIFilter() -> MKPointOfInterestFilter? {
+    return MKPointOfInterestFilter(including: touristPOICategories)
+}
+
 struct LandmarkInfoView: View {
     @StateObject private var model = LandmarkInfoViewModel()
     @State private var queryText: String = ""
@@ -652,15 +663,6 @@ struct LandmarkInfoView: View {
         return nil
     }
 
-    private func currentPOIFilter() -> MKPointOfInterestFilter? {
-        let included: [MKPointOfInterestCategory] = [
-            .museum, .landmark, .park, .nationalPark, .beach, .marina, .aquarium,
-            .amusementPark, .stadium, .theater, .movieTheater, .nightlife, .winery,
-            .brewery, .library, .university, .campground
-        ]
-        return MKPointOfInterestFilter(including: included)
-    }
-
     private func applyCompletion(_ completion: MKLocalSearchCompletion) {
         // Hide suggestions immediately and cancel any in-flight debounce
         completionUpdateTask?.cancel()
@@ -700,26 +702,7 @@ struct LandmarkInfoView: View {
         request.naturalLanguageQuery = q
         request.resultTypes = [.pointOfInterest, .physicalFeature]
         // Apply a POI category include filter to focus on tourist-relevant places
-        let includedCategories: [MKPointOfInterestCategory] = [
-            .museum,
-            .landmark,
-            .park,
-            .nationalPark,
-            .beach,
-            .marina,
-            .aquarium,
-            .amusementPark,
-            .stadium,
-            .theater,
-            .movieTheater,
-            .nightlife,
-            .winery,
-            .brewery,
-            .library,
-            .university,
-            .campground
-        ]
-        request.pointOfInterestFilter = MKPointOfInterestFilter(including: includedCategories)
+        request.pointOfInterestFilter = MKPointOfInterestFilter(including: touristPOICategories)
         do {
             let response = try await MKLocalSearch(request: request).start()
             let filtered = response.mapItems.compactMap { item -> MKMapItem? in
