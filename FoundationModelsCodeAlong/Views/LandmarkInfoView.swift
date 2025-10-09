@@ -205,6 +205,11 @@ private struct PlaceMapView: View {
     @State private var latestPinScaledID: UUID? = nil
     @State private var routePolyline: MKPolyline? = nil
 
+    @State private var routeETA: TimeInterval? = nil
+    @State private var routeDistance: CLLocationDistance? = nil
+
+    @State private var isRouting = false
+
     // NEW: mode + dialog flag
     @State private var mode: TransportMode = .walking
     @State private var showTransportDialog = false
@@ -240,6 +245,8 @@ private struct PlaceMapView: View {
             latestPinScaledID = newPin.id
             resetLatestPinAfterDelay()
             routePolyline = nil
+            routeETA = nil
+            routeDistance = nil
         }
     }
 
@@ -248,6 +255,8 @@ private struct PlaceMapView: View {
     private func makeRoute() async {
         guard let sourceItem = item,
               let destPin = lastSystemFeaturePin else { return }
+
+        isRouting = true
 
         let coord = destPin.coordinate
         let loc = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
@@ -263,15 +272,24 @@ private struct PlaceMapView: View {
         do {
             let response = try await directions.calculate()
             if let route = response.routes.first {
+                routeETA = route.expectedTravelTime
+                routeDistance = route.distance
                 routePolyline = route.polyline
                 withAnimation(.easeInOut(duration: 0.3)) {
                     position = .rect(route.polyline.boundingMapRect)
                 }
+                isRouting = false
             } else {
                 routePolyline = nil
+                isRouting = false
+                routeETA = nil
+                routeDistance = nil
             }
         } catch {
             routePolyline = nil
+            routeETA = nil
+            routeDistance = nil
+            isRouting = false
         }
     }
 
@@ -312,10 +330,14 @@ private struct PlaceMapView: View {
             let request = MKMapItemRequest(mapItemIdentifier: identifier)
             item = try? await request.mapItem
             routePolyline = nil
+            routeETA = nil
+            routeDistance = nil
             await setInitialCameraIfNeeded()
         }
         .onChange(of: item) { _, _ in
             routePolyline = nil
+            routeETA = nil
+            routeDistance = nil
             Task { await setInitialCameraIfNeeded() }
         }
         .toolbar {
@@ -344,6 +366,7 @@ private struct PlaceMapView: View {
         .confirmationDialog("Choose transport", isPresented: $showTransportDialog, titleVisibility: .visible) {
             ForEach(TransportMode.allCases) { choice in
                 Button {
+                    guard !isRouting else { return }
                     mode = choice
                     Task { await makeRoute() }
                 } label: {
@@ -357,8 +380,46 @@ private struct PlaceMapView: View {
                 droppedPins.removeAll()
                 selectedFeatureCoordinate = nil
                 routePolyline = nil
+                routeETA = nil
+                routeDistance = nil
+                isRouting = false
             }
             Button("Cancel", role: .cancel) { }
+        }
+        .overlay(alignment: .bottomLeading) {
+            if isRouting {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                        .scaleEffect(0.9)
+                    Text("Routing…")
+                        .font(.footnote)
+                        .foregroundStyle(.primary)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(.thinMaterial, in: Capsule())
+                .padding(10)
+                .accessibilityLabel("Calculating route")
+            }
+        }
+        .overlay(alignment: .bottomLeading) {
+            if let eta = routeETA, let dist = routeDistance, !isRouting {
+                HStack(spacing: 8) {
+                    Image(systemName: mode.icon)
+                        .imageScale(.medium)
+                        .foregroundStyle(Color(hue: 0.28, saturation: 0.95, brightness: 0.95))
+                        .shadow(color: Color(hue: 0.28, saturation: 0.95, brightness: 0.95).opacity(0.55), radius: 6)
+                    Text("\(formattedETA(eta)) • \(formattedDistance(dist))")
+                        .font(.footnote)
+                        .foregroundStyle(.primary)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(.thinMaterial, in: Capsule())
+                .padding(10)
+                .accessibilityLabel("\(mode.rawValue.capitalized) route, \(formattedETA(eta)), distance \(formattedDistance(dist))")
+            }
         }
     }
 
@@ -373,6 +434,25 @@ private struct PlaceMapView: View {
             position = .region(region)
             didSetInitialCamera = true
         }
+    }
+
+    private func formattedETA(_ seconds: TimeInterval) -> String {
+        let totalMinutes = Int(seconds / 60)
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
+        if hours > 0 {
+            return "ETA \(hours) hr \(minutes) min"
+        } else {
+            return "ETA \(minutes) min"
+        }
+    }
+
+    private func formattedDistance(_ meters: CLLocationDistance) -> String {
+        let formatter = MeasurementFormatter()
+        formatter.unitOptions = .naturalScale
+        formatter.unitStyle = .short
+        let measurement = Measurement(value: meters, unit: UnitLength.meters)
+        return formatter.string(from: measurement)
     }
 }
 private struct DescriptionSectionView: View {
@@ -986,3 +1066,4 @@ struct LandmarkInfoView: View {
         LandmarkInfoView()
     }
 }
+
