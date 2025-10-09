@@ -74,6 +74,96 @@ final class LandmarkInfoViewModel: ObservableObject {
     }
 }
 
+/// A lightweight provider for MKLocalSearchCompleter suggestions scoped to POIs.
+@MainActor
+private final class SearchCompletionProvider: NSObject, ObservableObject {
+    @Published var completions: [MKLocalSearchCompletion] = []
+    private var completer: MKLocalSearchCompleter?
+
+    func start() {
+        completer = MKLocalSearchCompleter()
+        completer?.delegate = self
+        completer?.resultTypes = [.pointOfInterest, .query]
+        completer?.regionPriority = .default
+    }
+
+    func stop() {
+        completer = nil
+        completions = []
+    }
+
+    func updateQuery(_ fragment: String, region: MKCoordinateRegion?, poiFilter: MKPointOfInterestFilter?) {
+        guard let completer else { return }
+        completer.resultTypes = [.pointOfInterest, .query]
+        completer.regionPriority = .default
+        completer.pointOfInterestFilter = poiFilter
+        if let region { completer.region = region }
+        completer.queryFragment = fragment
+    }
+}
+
+extension SearchCompletionProvider: MKLocalSearchCompleterDelegate {
+    nonisolated func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
+        Task { @MainActor in
+            self.completions = completer.results
+        }
+    }
+
+    nonisolated func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
+        Task { @MainActor in
+            self.completions = []
+        }
+    }
+}
+
+// Highlight helpers that mirror Apple's sample API but bridge to SwiftUI Text via AttributedString.
+private extension MKLocalSearchCompletion {
+    #if os(iOS)
+    var highlightedTitleAttributed: AttributedString {
+        AttributedString(Self.createHighlightedString(text: title, rangeValues: titleHighlightRanges))
+    }
+    var highlightedSubtitleAttributed: AttributedString {
+        AttributedString(Self.createHighlightedString(text: subtitle, rangeValues: subtitleHighlightRanges))
+    }
+
+    private static func createHighlightedString(text: String, rangeValues: [NSValue]) -> NSAttributedString {
+        let highlightedString = NSMutableAttributedString(string: text)
+        let ranges = rangeValues.map { $0.rangeValue }
+        let color = UIColor.systemYellow.withAlphaComponent(0.35)
+        for range in ranges {
+            highlightedString.addAttributes([.backgroundColor: color], range: range)
+        }
+        return highlightedString
+    }
+    #else
+    var highlightedTitleAttributed: AttributedString { AttributedString(title) }
+    var highlightedSubtitleAttributed: AttributedString { AttributedString(subtitle) }
+    #endif
+}
+
+// A simple row for displaying a completion with highlight.
+private struct SearchCompletionRow: View {
+    let completion: MKLocalSearchCompletion
+    let onSelect: () -> Void
+
+    var body: some View {
+        Button(action: onSelect) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(completion.highlightedTitleAttributed)
+                    .font(.body)
+                if !completion.subtitle.isEmpty {
+                    Text(completion.highlightedSubtitleAttributed)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 6)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 private struct StaticItineraryHeader9999: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -544,6 +634,41 @@ struct LandmarkInfoView: View {
     
     @State private var selectedItemForDetails: MKMapItem? = nil
 
+    // Search completion state
+    @StateObject private var completionProvider = SearchCompletionProvider()
+    @State private var searchCompletions: [MKLocalSearchCompletion] = []
+
+    private func currentCompleterRegion() -> MKCoordinateRegion? {
+        if model.latitude != 0 || model.longitude != 0 {
+            let span = model.category?.suggestedSpanDegrees ?? 0.25
+            return MKCoordinateRegion(
+                center: CLLocationCoordinate2D(latitude: model.latitude, longitude: model.longitude),
+                span: MKCoordinateSpan(latitudeDelta: span, longitudeDelta: span)
+            )
+        }
+        return nil
+    }
+
+    private func currentPOIFilter() -> MKPointOfInterestFilter? {
+        let included: [MKPointOfInterestCategory] = [
+            .museum, .landmark, .park, .nationalPark, .beach, .marina, .aquarium,
+            .amusementPark, .stadium, .theater, .movieTheater, .nightlife, .winery,
+            .brewery, .library, .university, .campground
+        ]
+        return MKPointOfInterestFilter(including: included)
+    }
+
+    private func applyCompletion(_ completion: MKLocalSearchCompletion) {
+        // Hide suggestions immediately
+        searchCompletions = []
+        let combined = [completion.title, completion.subtitle]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        queryText = combined
+        Task { await performSearch() }
+    }
+
     @MainActor
     private func performSearch() async {
         withAnimation { hasSelectedPlace = false }
@@ -865,16 +990,42 @@ struct LandmarkInfoView: View {
                         TextField("Enter landmark name", text: $queryText)
                             .textFieldStyle(.roundedBorder)
                             .submitLabel(.search)
-                            .onSubmit { Task { await performSearch() } }
+                            .onSubmit {
+                                searchCompletions = []
+                                Task { await performSearch() }
+                            }
 
                         Button("Search") {
+                            searchCompletions = []
                             Task { await performSearch() }
                         }
                         .buttonStyle(.borderedProminent)
                         .disabled(queryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
+                    .onChange(of: queryText) { _, newValue in
+                        completionProvider.updateQuery(newValue, region: currentCompleterRegion(), poiFilter: currentPOIFilter())
+                        if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            searchCompletions = []
+                        }
+                    }
                     .onChange(of: searchResults) { _, _ in
                         rebuildAvailableFilters()
+                    }
+                    .onReceive(completionProvider.$completions) { comps in
+                        self.searchCompletions = comps
+                    }
+
+                    if !searchCompletions.isEmpty && !queryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(Array(searchCompletions.enumerated()), id: \.offset) { _, completion in
+                                SearchCompletionRow(completion: completion) {
+                                    applyCompletion(completion)
+                                }
+                                Divider()
+                            }
+                        }
+                        .padding(10)
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
                     }
 
                     if isSearching {
@@ -1048,6 +1199,10 @@ struct LandmarkInfoView: View {
         }
         .onAppear {
             resetState()
+            completionProvider.start()
+        }
+        .onDisappear {
+            completionProvider.stop()
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
