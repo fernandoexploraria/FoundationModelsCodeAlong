@@ -1246,7 +1246,7 @@ struct LandmarkInfoView: View {
                         pendingLandmark = lm
                     }
                 } label: {
-                    Label("Itinerary", systemImage: "list.bullet.clipboard")
+                    Label("Itinerary", systemImage: "sparkles")
                 }
                 .disabled(!hasSelectedPlace || model.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.generatedDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .accessibilityLabel("Open Itinerary")
