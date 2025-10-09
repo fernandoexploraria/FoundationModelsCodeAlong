@@ -322,7 +322,7 @@ private struct PlaceMapView: View {
                 selectedFeatureCoordinate = nil
             }
         }
-        .frame(height: 260)
+        .frame(height: 270)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .padding(.bottom, 8)
         .task {
@@ -498,7 +498,7 @@ private struct DescriptionSectionView: View {
                 }
             }
             .padding(12)
-            .frame(height: 220)
+            .frame(height: 270)
             .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
         }
     }
@@ -850,8 +850,16 @@ struct LandmarkInfoView: View {
             StaticItineraryHeader9999()
             ScrollView {
                 VStack {
-                    Text("Landmark Info Lookup")
-                        .font(.title2).bold()
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("Landmark Info Lookup")
+                            .font(.title2).bold()
+                        if canGenerate && didPrewarm {
+                            Image(systemName: "sparkles")
+                                .font(.title3)
+                                .foregroundStyle(isGeneratingDescription ? Color(hue: 0.28, saturation: 0.95, brightness: 0.95) : Color.accentColor)
+                                .accessibilityHidden(true)
+                        }
+                    }
 
                     HStack(spacing: 8) {
                         TextField("Enter landmark name", text: $queryText)
@@ -957,7 +965,7 @@ struct LandmarkInfoView: View {
                                     }
                                 }
                             }
-                            .frame(height: CGFloat(min(filteredResults().count, 5)) * 64)
+                            .frame(height: CGFloat(min(filteredResults().count, 7)) * 64)
                         }
                         .padding(12)
                         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
@@ -1031,7 +1039,7 @@ struct LandmarkInfoView: View {
 
                 }
                 .padding(.horizontal)
-                .padding(.top, 120)
+                .padding(.top, 25)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1044,16 +1052,6 @@ struct LandmarkInfoView: View {
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
                 Task { await maybePrewarmIfAvailable() }
-            }
-        }
-        .overlay(alignment: .topLeading) {
-            if canGenerate && didPrewarm {
-                Image(systemName: "sparkles")
-                    .font(.title3)
-                    .foregroundStyle(isGeneratingDescription ? Color(hue: 0.28, saturation: 0.95, brightness: 0.95) : Color.accentColor)
-                    .padding(.top, 120)
-                    .padding(.leading, 16)
-                    .accessibilityHidden(true)
             }
         }
         .toolbar {
@@ -1083,3 +1081,4 @@ struct LandmarkInfoView: View {
         LandmarkInfoView()
     }
 }
+
