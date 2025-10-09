@@ -811,6 +811,20 @@ struct LandmarkInfoView: View {
         return parts.joined(separator: " ")
     }
     
+    // Added private computed property for suggestion context label
+    private var suggestionContextLabel: String? {
+        if hasSelectedPlace {
+            let combinedName = model.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !combinedName.isEmpty { return combinedName }
+            let city = model.city?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let rid = model.region?.identifier.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !city.isEmpty && !rid.isEmpty { return "\(city), \(rid)" }
+            if !city.isEmpty { return city }
+            if !rid.isEmpty { return rid }
+        }
+        return nil
+    }
+    
     private func rebuildAvailableFilters() {
         // Build a set of categories present in current searchResults
         var set = OrderedSet<String>()
@@ -1015,7 +1029,15 @@ struct LandmarkInfoView: View {
 
                     if !searchCompletions.isEmpty && !queryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         VStack(alignment: .leading, spacing: 0) {
-                            Text("Suggestions")
+                            // Updated header with dynamic label
+                            let suggestionsHeader: String = {
+                                if let label = suggestionContextLabel {
+                                    return "Suggestions near \(label)"
+                                } else {
+                                    return "Suggestions"
+                                }
+                            }()
+                            Text(suggestionsHeader)
                                 .font(.callout.weight(.semibold))
                                 .foregroundStyle(.primary)
                                 .padding(.horizontal, 6)
@@ -1244,4 +1266,5 @@ struct LandmarkInfoView: View {
         LandmarkInfoView()
     }
 }
+
 
