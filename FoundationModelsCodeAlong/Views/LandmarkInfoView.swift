@@ -171,14 +171,14 @@ private struct PrimaryMarker: MapContent {
 
 // MARK: - Transport mode (UI-friendly wrapper)
 private enum TransportMode: String, CaseIterable, Identifiable {
-    case walking, automobile, cycling, any
+    case walking, automobile, cycling, transit
     var id: String { rawValue }
     var icon: String {
         switch self {
         case .walking:    return "figure.walk"
         case .automobile: return "car.fill"
         case .cycling:    return "bicycle"
-        case .any:        return "point.topleft.down.curvedto.point.bottomright.up"
+        case .transit:    return "tram.fill"
         }
     }
     var mkType: MKDirectionsTransportType {
@@ -186,7 +186,7 @@ private enum TransportMode: String, CaseIterable, Identifiable {
         case .walking:    return .walking
         case .automobile: return .automobile
         case .cycling:    return .cycling
-        case .any:        return .any
+        case .transit:    return []
         }
     }
 }
@@ -367,8 +367,20 @@ private struct PlaceMapView: View {
             ForEach(TransportMode.allCases) { choice in
                 Button {
                     guard !isRouting else { return }
-                    mode = choice
-                    Task { await makeRoute() }
+                    if choice == .transit {
+                        guard let sourceItem = item, let destPin = lastSystemFeaturePin else { return }
+                        let coord = destPin.coordinate
+                        let loc = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
+                        let destination = MKMapItem(location: loc, address: nil)
+                        destination.name = destPin.name
+                        MKMapItem.openMaps(
+                            with: [sourceItem, destination],
+                            launchOptions: [MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeTransit]
+                        )
+                    } else {
+                        mode = choice
+                        Task { await makeRoute() }
+                    }
                 } label: {
                     Label(choice.rawValue.capitalized, systemImage: choice.icon)
                 }
@@ -1066,4 +1078,3 @@ struct LandmarkInfoView: View {
         LandmarkInfoView()
     }
 }
-
