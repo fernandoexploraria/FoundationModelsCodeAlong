@@ -755,20 +755,9 @@ struct LandmarkInfoView: View {
         model.continent = ContinentLookup.continentName(for: model.region)
         model.category = item.pointOfInterestCategory
         
-        let baseName = item.name ?? queryText
-        let cit = model.city?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let regionID = model.region?.identifier.trimmingCharacters(in: .whitespacesAndNewlines)
-        let baseAndCity = [baseName, cit]
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .joined(separator: ", ")
-        let combined: String
-        if let rid = regionID, !rid.isEmpty {
-            combined = "\(baseAndCity) \(rid)"
-        } else {
-            combined = baseAndCity
-        }
-        model.name = combined
+        // Replace legacy combined name building with helper
+        let baseName = (item.name ?? queryText).trimmingCharacters(in: .whitespacesAndNewlines)
+        model.name = standardizedName(baseName: baseName, region: model.region)
 
         // Reset the input field and suggestions to avoid re-triggering the completer
         completionUpdateTask?.cancel()
@@ -811,7 +800,28 @@ struct LandmarkInfoView: View {
         return parts.joined(separator: " ")
     }
     
-    // Added private computed property for suggestion context label
+    // Helper: Build a standardized name as "BaseName, CC" (or just BaseName if no region)
+    private func standardizedName(baseName: String, region: Locale.Region?) -> String {
+        let trimmedBase = baseName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedBase.isEmpty else { return "" }
+        // Prefer 2-letter country code if possible. Locale.Region.identifier may be like "US" or "US-CA".
+        let code: String? = {
+            guard let region else { return nil }
+            let id = region.identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !id.isEmpty else { return nil }
+            // Use the first component before '-' as the country code (e.g., "US" from "US-CA").
+            if let dash = id.firstIndex(of: "-") {
+                return String(id[..<dash])
+            }
+            return id
+        }()
+        if let cc = code, !cc.isEmpty {
+            return "\(trimmedBase), \(cc)"
+        } else {
+            return trimmedBase
+        }
+    }
+    
     private var suggestionContextLabel: String? {
         if hasSelectedPlace {
             let combinedName = model.name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1266,5 +1276,4 @@ struct LandmarkInfoView: View {
         LandmarkInfoView()
     }
 }
-
 

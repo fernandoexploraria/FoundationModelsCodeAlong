@@ -46,7 +46,7 @@ func getSuggestions(
     
     // define region
     let center = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
-    let meters: CLLocationDistance = 100_000
+    let meters: CLLocationDistance = 10_000
     let region = MKCoordinateRegion(center: center, latitudinalMeters: meters, longitudinalMeters: meters)
     //
     
