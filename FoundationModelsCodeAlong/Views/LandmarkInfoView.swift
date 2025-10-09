@@ -654,7 +654,7 @@ struct LandmarkInfoView: View {
 
     private func currentCompleterRegion() -> MKCoordinateRegion? {
         if model.latitude != 0 || model.longitude != 0 {
-            let span = model.category?.suggestedSpanDegrees ?? 0.25
+            let span = max(0.75, model.category?.suggestedSpanDegrees ?? 0.25)
             return MKCoordinateRegion(
                 center: CLLocationCoordinate2D(latitude: model.latitude, longitude: model.longitude),
                 span: MKCoordinateSpan(latitudeDelta: span, longitudeDelta: span)
@@ -1244,3 +1244,4 @@ struct LandmarkInfoView: View {
         LandmarkInfoView()
     }
 }
+
