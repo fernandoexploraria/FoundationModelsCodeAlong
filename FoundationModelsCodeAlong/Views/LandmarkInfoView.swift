@@ -637,6 +637,9 @@ struct LandmarkInfoView: View {
     // Search completion state
     @StateObject private var completionProvider = SearchCompletionProvider()
     @State private var searchCompletions: [MKLocalSearchCompletion] = []
+    
+    // Added: debounce task reference for completions update cancel
+    @State private var completionUpdateTask: Task<Void, Never>? = nil
 
     private func currentCompleterRegion() -> MKCoordinateRegion? {
         if model.latitude != 0 || model.longitude != 0 {
@@ -659,14 +662,23 @@ struct LandmarkInfoView: View {
     }
 
     private func applyCompletion(_ completion: MKLocalSearchCompletion) {
-        // Hide suggestions immediately
+        // Hide suggestions immediately and cancel any in-flight debounce
+        completionUpdateTask?.cancel()
         searchCompletions = []
+
+        // Build a strong initial query from the completion
         let combined = [completion.title, completion.subtitle]
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: " ")
+
+        // Set the query, perform the search, then reset the input to avoid re-triggering the completer
         queryText = combined
-        Task { await performSearch() }
+        Task { @MainActor in
+            await performSearch()
+            // Reset input so the completer does not repopulate new suggestions for the selected text
+            queryText = ""
+        }
     }
 
     @MainActor
@@ -775,7 +787,10 @@ struct LandmarkInfoView: View {
         }
         model.name = combined
 
-        queryText = baseName
+        // Reset the input field and suggestions to avoid re-triggering the completer
+        completionUpdateTask?.cancel()
+        queryText = ""
+        searchCompletions = []
 
         // Clear the results list and message
         searchResults = []
@@ -1017,15 +1032,25 @@ struct LandmarkInfoView: View {
 
                     if !searchCompletions.isEmpty && !queryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         VStack(alignment: .leading, spacing: 0) {
-                            ForEach(Array(searchCompletions.enumerated()), id: \.offset) { _, completion in
-                                SearchCompletionRow(completion: completion) {
-                                    applyCompletion(completion)
+                            Text("Suggestions")
+                                .font(.callout.weight(.semibold))
+                                .foregroundStyle(.primary)
+                                .padding(.horizontal, 6)
+                                .padding(.top, 2)
+
+                            Divider().opacity(0.25)
+
+                            ScrollView {
+                                ForEach(Array(searchCompletions.enumerated()), id: \.offset) { _, completion in
+                                    SearchCompletionRow(completion: completion) {
+                                        applyCompletion(completion)
+                                    }
+                                    Divider()
                                 }
-                                Divider()
                             }
+                            .padding(10)
+                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
                         }
-                        .padding(10)
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
                     }
 
                     if isSearching {
@@ -1236,4 +1261,3 @@ struct LandmarkInfoView: View {
         LandmarkInfoView()
     }
 }
-
