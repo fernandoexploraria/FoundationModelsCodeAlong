@@ -98,8 +98,13 @@ func getSuggestions(
         return !isDuplicate
     }
 
-    // Map to transliterated names and return up to three
-    let names = dedupedItems.compactMap { $0.name?.transliteratedLatin }
+    // Map to transliterated names, prefix with "TG ", and return up to three
+    let names = dedupedItems.compactMap { item -> String? in
+        guard let raw = item.name?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return nil }
+        let transliterated = raw.transliteratedLatin
+        guard !transliterated.isEmpty else { return nil }
+        return "TG " + transliterated
+    }
     return Array(names.prefix(3))
     //
     
