@@ -629,6 +629,8 @@ struct LandmarkInfoView: View {
     @State private var canGenerate = false
     @State private var didPrewarm = false
     @State private var didPrewarmItinerary = false
+    @State private var itineraryPrewarmCount: Int = 0
+
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dismiss) private var dismiss
 
@@ -782,6 +784,8 @@ struct LandmarkInfoView: View {
                 await startDescriptionGeneration()
             }
         }
+        // Prewarm itinerary once we can construct a valid Landmark
+        maybePrewarmItineraryIfPossible()
     }
 
     private func subtitleParts(for item: MKMapItem) -> (symbolName: String?, city: String?, regionID: String?) {
@@ -925,29 +929,27 @@ struct LandmarkInfoView: View {
                 // If prewarmModel is async in your implementation, prefer: `await warmup.prewarmModel()`
                 warmup.prewarmModel()
                 didPrewarm = true
-                
-                // Prewarm ItineraryGenerator once, using a placeholder landmark
-                if !didPrewarmItinerary {
-                    let placeholder = Landmark(
-                        id: 0,
-                        name: model.name.isEmpty ? "Warmup Landmark" : model.name,
-                        continent: "",
-                        description: "",
-                        shortDescription: "",
-                        latitude: 0,
-                        longitude: 0,
-                        span: 0.1,
-                        placeID: nil
-                    )
-                    let itinWarmup = ItineraryGenerator(landmark: placeholder)
-                    // If your prewarm is async, prefer: `await itinWarmup.prewarmModel()`
-                    itinWarmup.prewarmModel()
-                    didPrewarmItinerary = true
-                }
             }
         default:
             canGenerate = false
         }
+    }
+    
+    @MainActor
+    private func maybePrewarmItineraryIfPossible() {
+        // Only prewarm if Apple Intelligence is available
+        guard canGenerate else { return }
+        // Build a Landmark from the current JSON
+        guard let lm = landmarkFromCurrentJSON() else { return }
+
+        // Create and store a generator tied to this landmark, then prewarm it
+        let gen = ItineraryGenerator(landmark: lm)
+        directItineraryLandmark = lm
+        directItineraryGenerator = gen
+        gen.prewarmModel()
+
+        didPrewarmItinerary = true
+        itineraryPrewarmCount += 1
     }
     
     @MainActor
@@ -1032,13 +1034,26 @@ struct LandmarkInfoView: View {
                                 .accessibilityHidden(true)
                         }
                         if canGenerate && didPrewarmItinerary {
-                            Image(systemName: "sparkles")
-                                .font(.title3)
-                                .foregroundStyle(isGeneratingDirect ? Color(hue: 0.28, saturation: 0.95, brightness: 0.95) : Color.accentColor)
-                                .scaleEffect(isGeneratingDirect ? 1.08 : 1.0)
-                                .opacity(isGeneratingDirect ? 0.9 : 1.0)
-                                .animation(isGeneratingDirect ? .easeInOut(duration: 0.9).repeatForever(autoreverses: true) : .default, value: isGeneratingDirect)
-                                .accessibilityHidden(true)
+                            ZStack(alignment: .topTrailing) {
+                                Image(systemName: "sparkles")
+                                    .font(.title3)
+                                    .foregroundStyle(isGeneratingDirect ? Color(hue: 0.28, saturation: 0.95, brightness: 0.95) : Color.accentColor)
+                                    .scaleEffect(isGeneratingDirect ? 1.08 : 1.0)
+                                    .opacity(isGeneratingDirect ? 0.9 : 1.0)
+                                    .animation(isGeneratingDirect ? .easeInOut(duration: 0.9).repeatForever(autoreverses: true) : .default, value: isGeneratingDirect)
+                                    .accessibilityHidden(true)
+
+                                if itineraryPrewarmCount > 0 {
+                                    Text("\u{00D7}\(itineraryPrewarmCount)")
+                                        .font(.caption2.weight(.semibold))
+                                        .foregroundStyle(.primary)
+                                        .padding(.horizontal, 4)
+                                        .padding(.vertical, 2)
+                                        .background(.ultraThinMaterial, in: Capsule())
+                                        .offset(x: 10, y: -8)
+                                        .accessibilityLabel("Itinerary model prewarmed \(itineraryPrewarmCount) times")
+                                }
+                            }
                         }
                     }
                     
@@ -1307,7 +1322,9 @@ struct LandmarkInfoView: View {
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
-                Task { await maybePrewarmIfAvailable() }
+                Task {
+                    await maybePrewarmIfAvailable()
+                }
             }
         }
         .toolbar {
@@ -1319,7 +1336,6 @@ struct LandmarkInfoView: View {
                     directItineraryGenerator = gen
                     isGeneratingDirect = true
                     Task {
-                        gen.prewarmModel()
                         await gen.generateItinerary()
                         isGeneratingDirect = false
                         if gen.itinerary != nil {
@@ -1367,3 +1383,4 @@ struct LandmarkInfoView: View {
         LandmarkInfoView()
     }
 }
+
