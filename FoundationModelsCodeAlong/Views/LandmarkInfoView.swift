@@ -621,8 +621,6 @@ struct LandmarkInfoView: View {
     @StateObject private var model = LandmarkInfoViewModel()
     @State private var queryText: String = ""
 
-    @State private var pendingLandmark: Landmark? = nil
-
     @State private var descriptionGenerator: DescriptionGenerator? = nil
     @State private var isGeneratingDescription = false
     
@@ -644,6 +642,13 @@ struct LandmarkInfoView: View {
     @State private var hasSelectedPlace = false
     
     @State private var selectedItemForDetails: MKMapItem? = nil
+
+    // Direct itinerary generation (Option B)
+    @State private var directItineraryGenerator: ItineraryGenerator? = nil
+    @State private var directItineraryLandmark: Landmark? = nil
+    @State private var showDirectItinerary: Bool = false
+    @State private var isGeneratingDirect: Bool = false
+    @State private var directGenerationError: Error? = nil
 
     // Search completion state
     @StateObject private var completionProvider = SearchCompletionProvider()
@@ -945,9 +950,6 @@ struct LandmarkInfoView: View {
         descriptionGenerator = nil
         isGeneratingDescription = false
         
-        // Clear navigation state
-        pendingLandmark = nil
-        
         // Reset UI measurements and search state
         searchResults = []
         isSearching = false
@@ -1234,6 +1236,23 @@ struct LandmarkInfoView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay(alignment: .bottomTrailing) {
+            if isGeneratingDirect {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                        .scaleEffect(0.9)
+                    Text("Generating itinerary…")
+                        .font(.footnote)
+                        .foregroundStyle(.primary)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(.thinMaterial, in: Capsule())
+                .padding(10)
+                .accessibilityLabel("Generating itinerary")
+            }
+        }
         .task {
             await maybePrewarmIfAvailable()
         }
@@ -1252,19 +1271,44 @@ struct LandmarkInfoView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    if let lm = landmarkFromCurrentJSON() {
-                        pendingLandmark = lm
+                    guard !isGeneratingDirect, let lm = landmarkFromCurrentJSON() else { return }
+                    directItineraryLandmark = lm
+                    let gen = ItineraryGenerator(landmark: lm)
+                    directItineraryGenerator = gen
+                    isGeneratingDirect = true
+                    Task {
+                        gen.prewarmModel()
+                        await gen.generateItinerary()
+                        isGeneratingDirect = false
+                        if gen.itinerary != nil {
+                            showDirectItinerary = true
+                        }
                     }
                 } label: {
-                    Label("Itinerary", systemImage: "sparkles")
+                    Label("Generate Itinerary", systemImage: "list.bullet.clipboard")
                 }
-                .disabled(!hasSelectedPlace || model.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.generatedDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .accessibilityLabel("Open Itinerary")
+                .disabled(!hasSelectedPlace || model.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isGeneratingDirect)
+                .accessibilityLabel("Generate itinerary directly")
             }
         }
         .toolbarBackground(.hidden, for: ToolbarPlacement.navigationBar)
-        .navigationDestination(item: $pendingLandmark) { landmark in
-            LandmarkDetailView(landmark: landmark)
+        .sheet(isPresented: $showDirectItinerary) {
+            if let lm = directItineraryLandmark, let itin = directItineraryGenerator?.itinerary {
+                ScrollView {
+                    ItineraryView(landmark: lm, itinerary: itin)
+                        .padding()
+                }
+            } else {
+                VStack(spacing: 12) {
+                    ProgressView("Generating…")
+                    if let _ = directGenerationError {
+                        Text("Generation failed. Please try again.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding()
+            }
         }
         .navigationBarTitleDisplayMode(.inline)
         .mapItemDetailSheet(item: $selectedItemForDetails)
@@ -1276,4 +1320,3 @@ struct LandmarkInfoView: View {
         LandmarkInfoView()
     }
 }
-
