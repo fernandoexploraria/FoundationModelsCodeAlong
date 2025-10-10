@@ -628,6 +628,7 @@ struct LandmarkInfoView: View {
     
     @State private var canGenerate = false
     @State private var didPrewarm = false
+    @State private var didPrewarmItinerary = false
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dismiss) private var dismiss
 
@@ -924,6 +925,25 @@ struct LandmarkInfoView: View {
                 // If prewarmModel is async in your implementation, prefer: `await warmup.prewarmModel()`
                 warmup.prewarmModel()
                 didPrewarm = true
+                
+                // Prewarm ItineraryGenerator once, using a placeholder landmark
+                if !didPrewarmItinerary {
+                    let placeholder = Landmark(
+                        id: 0,
+                        name: model.name.isEmpty ? "Warmup Landmark" : model.name,
+                        continent: "",
+                        description: "",
+                        shortDescription: "",
+                        latitude: 0,
+                        longitude: 0,
+                        span: 0.1,
+                        placeID: nil
+                    )
+                    let itinWarmup = ItineraryGenerator(landmark: placeholder)
+                    // If your prewarm is async, prefer: `await itinWarmup.prewarmModel()`
+                    itinWarmup.prewarmModel()
+                    didPrewarmItinerary = true
+                }
             }
         default:
             canGenerate = false
@@ -1006,8 +1026,30 @@ struct LandmarkInfoView: View {
                             Image(systemName: "sparkles")
                                 .font(.title3)
                                 .foregroundStyle(isGeneratingDescription ? Color(hue: 0.28, saturation: 0.95, brightness: 0.95) : Color.accentColor)
+                                .scaleEffect(isGeneratingDescription ? 1.08 : 1.0)
+                                .opacity(isGeneratingDescription ? 0.9 : 1.0)
+                                .animation(isGeneratingDescription ? .easeInOut(duration: 0.9).repeatForever(autoreverses: true) : .default, value: isGeneratingDescription)
                                 .accessibilityHidden(true)
                         }
+                        if canGenerate && didPrewarmItinerary {
+                            Image(systemName: "sparkles")
+                                .font(.title3)
+                                .foregroundStyle(isGeneratingDirect ? Color(hue: 0.28, saturation: 0.95, brightness: 0.95) : Color.accentColor)
+                                .scaleEffect(isGeneratingDirect ? 1.08 : 1.0)
+                                .opacity(isGeneratingDirect ? 0.9 : 1.0)
+                                .animation(isGeneratingDirect ? .easeInOut(duration: 0.9).repeatForever(autoreverses: true) : .default, value: isGeneratingDirect)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                    
+                    if !canGenerate {
+                        Text("Apple Intelligence not available on this device.")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(.ultraThinMaterial, in: Capsule())
+                            .padding(.top, 4)
                     }
 
                     HStack(spacing: 8) {
@@ -1285,9 +1327,14 @@ struct LandmarkInfoView: View {
                         }
                     }
                 } label: {
-                    Label("Generate Itinerary", systemImage: "list.bullet.clipboard")
+                    Label("Generate Itinerary", systemImage: "sparkles")
                 }
-                .disabled(!hasSelectedPlace || model.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isGeneratingDirect)
+                .disabled(!hasSelectedPlace
+                          || model.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                          || isGeneratingDirect
+                          || !canGenerate)
+                .help(!canGenerate ? "Apple Intelligence is not available." : "Generate a trip itinerary for the selected place.")
+                .accessibilityHint(!canGenerate ? "Apple Intelligence is not available" : "Generates a trip itinerary for the selected place")
                 .accessibilityLabel("Generate itinerary directly")
             }
         }
