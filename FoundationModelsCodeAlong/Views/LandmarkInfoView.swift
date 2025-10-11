@@ -1342,14 +1342,27 @@ struct LandmarkInfoView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     guard !isGeneratingDirect, let lm = landmarkFromCurrentJSON() else { return }
-                    directItineraryLandmark = lm
-                    let gen = ItineraryGenerator(landmark: lm)
-                    directItineraryGenerator = gen
+
+                    // Prefer reusing the prewarmed generator if it matches the current place by placeID
+                    let generatorToUse: ItineraryGenerator = {
+                        if let existingLM = directItineraryLandmark,
+                           let existingGen = directItineraryGenerator,
+                           let a = existingLM.placeID, let b = lm.placeID, a == b {
+                            return existingGen
+                        } else {
+                            // Create a new generator for this landmark if no suitable prewarmed instance exists
+                            let newGen = ItineraryGenerator(landmark: lm)
+                            directItineraryLandmark = lm
+                            directItineraryGenerator = newGen
+                            return newGen
+                        }
+                    }()
+
                     isGeneratingDirect = true
                     Task {
-                        await gen.generateItinerary()
+                        await generatorToUse.generateItinerary()
                         isGeneratingDirect = false
-                        if gen.itinerary != nil {
+                        if generatorToUse.itinerary != nil {
                             showDirectItinerary = true
                         }
                     }
