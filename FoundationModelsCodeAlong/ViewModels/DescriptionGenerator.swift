@@ -19,7 +19,9 @@ final class DescriptionGenerator {
         do {
             let prompt = "Generate a brief and exciting description for \(name)."
             let response = try await session.respond(to: prompt)
-            self.description = response.content
+            let safeDescriptionRaw = response.content.transliteratedLatinSafe
+            let safeDescription = safeDescriptionRaw.isEmpty ? response.content : safeDescriptionRaw
+            self.description = safeDescription
         } catch {
             self.error = error
         }

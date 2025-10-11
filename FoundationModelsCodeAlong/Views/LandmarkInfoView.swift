@@ -660,6 +660,9 @@ struct LandmarkInfoView: View {
     // Added: debounce task reference for completions update cancel
     @State private var completionUpdateTask: Task<Void, Never>? = nil
 
+    // Added toast state
+    @State private var toastMessage: String? = nil
+
     private func currentCompleterRegion() -> MKCoordinateRegion? {
         if model.latitude != 0 || model.longitude != 0 {
             let span = max(0.75, model.category?.suggestedSpanDegrees ?? 0.25)
@@ -765,7 +768,9 @@ struct LandmarkInfoView: View {
         
         // Replace legacy combined name building with helper
         let baseName = (item.name ?? queryText).trimmingCharacters(in: .whitespacesAndNewlines)
-        model.name = standardizedName(baseName: baseName, region: model.region)
+        let standardized = standardizedName(baseName: baseName, region: model.region)
+        let safe = standardized.transliteratedLatinSafe
+        model.name = safe.isEmpty ? standardized : safe
 
         // Reset the input field and suggestions to avoid re-triggering the completer
         completionUpdateTask?.cancel()
@@ -1304,6 +1309,18 @@ struct LandmarkInfoView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay(alignment: .bottomLeading) {
+            if let msg = toastMessage {
+                Text(msg)
+                    .font(.footnote)
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(.thinMaterial, in: Capsule())
+                    .padding(10)
+                    .transition(.opacity.combined(with: .scale))
+            }
+        }
         .overlay(alignment: .bottomTrailing) {
             if isGeneratingDirect {
                 HStack(spacing: 8) {
@@ -1344,13 +1361,31 @@ struct LandmarkInfoView: View {
                     guard !isGeneratingDirect, let lm = landmarkFromCurrentJSON() else { return }
 
                     // Prefer reusing the prewarmed generator if it matches the current place by placeID
-                    let generatorToUse: ItineraryGenerator = {
+                    let isReusingPrewarmed: Bool = {
                         if let existingLM = directItineraryLandmark,
-                           let existingGen = directItineraryGenerator,
+                           let _ = directItineraryGenerator,
                            let a = existingLM.placeID, let b = lm.placeID, a == b {
-                            return existingGen
+                            return true
+                        }
+                        return false
+                    }()
+
+                    toastMessage = isReusingPrewarmed ? "prewarmed" : "new"
+
+                    // Clear toast after a short delay
+                    Task {
+                        try? await Task.sleep(nanoseconds: 1_800_000_000)
+                        if toastMessage == (isReusingPrewarmed ? "prewarmed" : "new") {
+                            withAnimation {
+                                toastMessage = nil
+                            }
+                        }
+                    }
+
+                    let generatorToUse: ItineraryGenerator = {
+                        if isReusingPrewarmed {
+                            return directItineraryGenerator!
                         } else {
-                            // Create a new generator for this landmark if no suitable prewarmed instance exists
                             let newGen = ItineraryGenerator(landmark: lm)
                             directItineraryLandmark = lm
                             directItineraryGenerator = newGen

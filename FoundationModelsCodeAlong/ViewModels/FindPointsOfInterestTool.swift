@@ -101,9 +101,9 @@ func getSuggestions(
     // Map to transliterated names, prefix with "TG ", and return up to three
     let names = dedupedItems.compactMap { item -> String? in
         guard let raw = item.name?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return nil }
-        let transliterated = raw.transliteratedLatin
-        guard !transliterated.isEmpty else { return nil }
-        return "TG " + transliterated
+        let transliterated = raw.transliteratedLatinSafe
+        let finalName = transliterated.isEmpty ? raw : transliterated
+        return "TG " + finalName
     }
     return Array(names.prefix(3))
     //
@@ -118,19 +118,5 @@ extension Category {
         case .restaurant:
             return .restaurant
         }
-    }
-}
-
-extension String {
-    /// Returns a basic Latin/ASCII transliteration of the string by removing diacritics
-    /// and dropping non-ASCII scalars. This is intentionally lossy and minimal.
-    var transliteratedLatin: String {
-        // Decompose to separate base characters from diacritics
-        let decomposed = self.decomposedStringWithCanonicalMapping
-        // Remove combining diacritic marks
-        let noDiacriticsScalars = decomposed.unicodeScalars.filter { !$0.properties.isDiacritic }
-        // Keep only ASCII scalars to be extra safe for model consumption
-        let asciiScalars = noDiacriticsScalars.filter { $0.isASCII }
-        return String(String.UnicodeScalarView(asciiScalars))
     }
 }
