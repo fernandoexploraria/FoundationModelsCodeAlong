@@ -934,13 +934,24 @@ struct LandmarkInfoView: View {
             canGenerate = false
         }
     }
-    
+
+    // Inserted helper function to compare two landmarks by placeID
+    private func isSameLandmarkByPlaceID(_ a: Landmark, _ b: Landmark) -> Bool {
+        guard let pa = a.placeID, !pa.isEmpty, let pb = b.placeID, !pb.isEmpty else { return false }
+        return pa == pb
+    }
+
     @MainActor
     private func maybePrewarmItineraryIfPossible() {
         // Only prewarm if Apple Intelligence is available
         guard canGenerate else { return }
         // Build a Landmark from the current JSON
         guard let lm = landmarkFromCurrentJSON() else { return }
+
+        // If we already have a prewarmed landmark with the same placeID, skip
+        if let existing = directItineraryLandmark, isSameLandmarkByPlaceID(existing, lm) {
+            return
+        }
 
         // Create and store a generator tied to this landmark, then prewarm it
         let gen = ItineraryGenerator(landmark: lm)
